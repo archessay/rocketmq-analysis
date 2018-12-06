@@ -16,6 +16,18 @@
  */
 package org.apache.rocketmq.store;
 
+import org.apache.rocketmq.common.ServiceThread;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.message.*;
+import org.apache.rocketmq.common.sysflag.MessageSysFlag;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.store.config.BrokerRole;
+import org.apache.rocketmq.store.config.FlushDiskType;
+import org.apache.rocketmq.store.ha.HAService;
+import org.apache.rocketmq.store.schedule.ScheduleMessageService;
+
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -23,21 +35,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import org.apache.rocketmq.common.ServiceThread;
-import org.apache.rocketmq.common.UtilAll;
-import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
-import org.apache.rocketmq.common.message.MessageAccessor;
-import org.apache.rocketmq.common.message.MessageConst;
-import org.apache.rocketmq.common.message.MessageDecoder;
-import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.message.MessageExtBatch;
-import org.apache.rocketmq.common.sysflag.MessageSysFlag;
-import org.apache.rocketmq.store.config.BrokerRole;
-import org.apache.rocketmq.store.config.FlushDiskType;
-import org.apache.rocketmq.store.ha.HAService;
-import org.apache.rocketmq.store.schedule.ScheduleMessageService;
 
 /**
  * Store all metadata downtime for recovery, data protection reliability
@@ -52,24 +49,32 @@ public class CommitLog {
     private final DefaultMessageStore defaultMessageStore;
     private final FlushCommitLogService flushCommitLogService;
 
-    //If TransientStorePool enabled, we must flush message to FileChannel at fixed periods
+    // If TransientStorePool enabled, we must flush message to FileChannel at fixed periods
+    // 如果启用了TransientStorePool，我们必须在固定的时间段内将消息刷新到FileChannel
     private final FlushCommitLogService commitLogService;
 
     private final AppendMessageCallback appendMessageCallback;
     private final ThreadLocal<MessageExtBatchEncoder> batchEncoderThreadLocal;
+    // consumeQueue topic-queueid offset table，topic-queueid 格式为key，值为offset
     private HashMap<String/* topic-queueid */, Long/* offset */> topicQueueTable = new HashMap<String, Long>(1024);
     private volatile long confirmOffset = -1L;
 
+    // 消息写入时，将其设置为当前时间。
+    // 消息写入完成后，先将beginTimeInLock设置为0，然后释放锁。
+    // 该值用来计算消息写入耗时。
+    // 写入新消息前，会根据该值来检查操作系统页写入是否忙，如果上一消息在1s内没有成功写入，则本次消息不再写入，返回页写入忙响应。
     private volatile long beginTimeInLock = 0;
+    // 确定在存储消息时是否使用互斥锁reentrantLock。默认情况下，它设置为false，表示在存储消息时使用自旋锁。
     private final PutMessageLock putMessageLock;
 
     public CommitLog(final DefaultMessageStore defaultMessageStore) {
-        // 构造mappedFileQueue，指定:
+        // 构造mappedFileQueue对象，指定:
         //          1. CommitLog文件的存储路径;
         //          2. CommitLog文件大小，默认1G;
         //          3. MappedFile分配线程，RocketMQ使用内存映射处理commitLog，consumeQueue文件
         this.mappedFileQueue = new MappedFileQueue(defaultMessageStore.getMessageStoreConfig().getStorePathCommitLog(),
-            defaultMessageStore.getMessageStoreConfig().getMapedFileSizeCommitLog(), defaultMessageStore.getAllocateMappedFileService());
+                defaultMessageStore.getMessageStoreConfig().getMapedFileSizeCommitLog(), defaultMessageStore.getAllocateMappedFileService());
+
         this.defaultMessageStore = defaultMessageStore;
 
         // 刷盘策略
@@ -88,7 +93,7 @@ public class CommitLog {
                 return new MessageExtBatchEncoder(defaultMessageStore.getMessageStoreConfig().getMaxMessageSize());
             }
         };
-        // version 4.0.x
+
         // 确定在存储消息时是否使用互斥锁reentrantLock。默认情况下，它设置为false，表示在存储消息时使用自旋锁。
         this.putMessageLock = defaultMessageStore.getMessageStoreConfig().isUseReentrantLockWhenPutMessage() ? new PutMessageReentrantLock() : new PutMessageSpinLock();
 
@@ -103,6 +108,7 @@ public class CommitLog {
     public void start() {
         this.flushCommitLogService.start();
 
+        // 如果启用了TransientStorePool，我们必须在固定的时间段内将消息刷新到FileChannel
         if (defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
             this.commitLogService.start();
         }
@@ -135,10 +141,10 @@ public class CommitLog {
     }
 
     public int deleteExpiredFile(
-        final long expiredTime,
-        final int deleteFilesInterval,
-        final long intervalForcibly,
-        final boolean cleanImmediately
+            final long expiredTime,
+            final int deleteFilesInterval,
+            final long intervalForcibly,
+            final boolean cleanImmediately
     ) {
         return this.mappedFileQueue.deleteExpiredFileByTime(expiredTime, deleteFilesInterval, intervalForcibly, cleanImmediately);
     }
@@ -232,7 +238,7 @@ public class CommitLog {
      * @return 0 Come the end of the file // >0 Normal messages // -1 Message checksum failure
      */
     public DispatchRequest checkMessageAndReturnSize(java.nio.ByteBuffer byteBuffer, final boolean checkCRC,
-        final boolean readBody) {
+                                                     final boolean readBody) {
         try {
             // 1 TOTAL SIZE
             int totalSize = byteBuffer.getInt();
@@ -328,7 +334,7 @@ public class CommitLog {
 
                         if (delayLevel > 0) {
                             tagsCode = this.defaultMessageStore.getScheduleMessageService().computeDeliverTimestamp(delayLevel,
-                                storeTimestamp);
+                                    storeTimestamp);
                         }
                     }
                 }
@@ -342,24 +348,24 @@ public class CommitLog {
                 doNothingForDeadCode(byteBuffer1);
                 doNothingForDeadCode(byteBuffer2);
                 log.error(
-                    "[BUG]read total count not equals msg total size. totalSize={}, readTotalCount={}, bodyLen={}, topicLen={}, propertiesLength={}",
-                    totalSize, readLength, bodyLen, topicLen, propertiesLength);
+                        "[BUG]read total count not equals msg total size. totalSize={}, readTotalCount={}, bodyLen={}, topicLen={}, propertiesLength={}",
+                        totalSize, readLength, bodyLen, topicLen, propertiesLength);
                 return new DispatchRequest(totalSize, false/* success */);
             }
 
             return new DispatchRequest(
-                topic,
-                queueId,
-                physicOffset,
-                totalSize,
-                tagsCode,
-                storeTimestamp,
-                queueOffset,
-                keys,
-                uniqKey,
-                sysFlag,
-                preparedTransactionOffset,
-                propertiesMap
+                    topic,
+                    queueId,
+                    physicOffset,
+                    totalSize,
+                    tagsCode,
+                    storeTimestamp,
+                    queueOffset,
+                    keys,
+                    uniqKey,
+                    sysFlag,
+                    preparedTransactionOffset,
+                    propertiesMap
             );
         } catch (Exception e) {
         }
@@ -369,23 +375,23 @@ public class CommitLog {
 
     private static int calMsgLength(int bodyLength, int topicLength, int propertiesLength) {
         final int msgLen = 4 //TOTALSIZE
-            + 4 //MAGICCODE
-            + 4 //BODYCRC
-            + 4 //QUEUEID
-            + 4 //FLAG
-            + 8 //QUEUEOFFSET
-            + 8 //PHYSICALOFFSET
-            + 4 //SYSFLAG
-            + 8 //BORNTIMESTAMP
-            + 8 //BORNHOST
-            + 8 //STORETIMESTAMP
-            + 8 //STOREHOSTADDRESS
-            + 4 //RECONSUMETIMES
-            + 8 //Prepared Transaction Offset
-            + 4 + (bodyLength > 0 ? bodyLength : 0) //BODY
-            + 1 + topicLength //TOPIC
-            + 2 + (propertiesLength > 0 ? propertiesLength : 0) //propertiesLength
-            + 0;
+                + 4 //MAGICCODE
+                + 4 //BODYCRC
+                + 4 //QUEUEID
+                + 4 //FLAG
+                + 8 //QUEUEOFFSET
+                + 8 //PHYSICALOFFSET
+                + 4 //SYSFLAG
+                + 8 //BORNTIMESTAMP
+                + 8 //BORNHOST
+                + 8 //STORETIMESTAMP
+                + 8 //STOREHOSTADDRESS
+                + 4 //RECONSUMETIMES
+                + 8 //Prepared Transaction Offset
+                + 4 + (bodyLength > 0 ? bodyLength : 0) //BODY
+                + 1 + topicLength //TOPIC
+                + 2 + (propertiesLength > 0 ? propertiesLength : 0) //propertiesLength
+                + 0;
         return msgLen;
     }
 
@@ -492,18 +498,18 @@ public class CommitLog {
         }
 
         if (this.defaultMessageStore.getMessageStoreConfig().isMessageIndexEnable()
-            && this.defaultMessageStore.getMessageStoreConfig().isMessageIndexSafe()) {
+                && this.defaultMessageStore.getMessageStoreConfig().isMessageIndexSafe()) {
             if (storeTimestamp <= this.defaultMessageStore.getStoreCheckpoint().getMinTimestampIndex()) {
                 log.info("find check timestamp, {} {}",
-                    storeTimestamp,
-                    UtilAll.timeMillisToHumanString(storeTimestamp));
+                        storeTimestamp,
+                        UtilAll.timeMillisToHumanString(storeTimestamp));
                 return true;
             }
         } else {
             if (storeTimestamp <= this.defaultMessageStore.getStoreCheckpoint().getMinTimestamp()) {
                 log.info("find check timestamp, {} {}",
-                    storeTimestamp,
-                    UtilAll.timeMillisToHumanString(storeTimestamp));
+                        storeTimestamp,
+                        UtilAll.timeMillisToHumanString(storeTimestamp));
                 return true;
             }
         }
@@ -536,26 +542,30 @@ public class CommitLog {
         AppendMessageResult result = null;
 
         // 存储统计服务
-        // 对消息的存储耗时进行分级记录，并记录当前所有消息存储的最大耗时
+        // 对消息的存储耗时进行分级记录，并记录当前所有消息存储耗时中的最大耗时
         StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();
 
         String topic = msg.getTopic();
         int queueId = msg.getQueueId();
 
         // 获取消息类型
-        final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
+        final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag()); // @2
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
-            || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
+                || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
-            if (msg.getDelayTimeLevel() > 0) {
-                if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
+            if (msg.getDelayTimeLevel() > 0) { // 获取消息延时投递时间级别
+                if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) { // @3
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
                 }
 
+                // topic值更改为SCHEDULE_TOPIC_XXXX
                 topic = ScheduleMessageService.SCHEDULE_TOPIC;
+                // 根据延迟级别获取延时消息的队列 ID（ queueId 等于延迟级别减去 1） 并更改 queueId 值
                 queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());
 
                 // Backup real topic, queueId
+                // 将消息中原 topic 和 queueId 存入消息属性中；
+                // @4
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));
                 msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));
@@ -567,9 +577,11 @@ public class CommitLog {
 
         long eclipseTimeInLock = 0;
         MappedFile unlockMappedFile = null;
-        MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();
+        MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(); // @5
 
-        putMessageLock.lock(); //spin or ReentrantLock ,depending on store config
+        // 加锁，默认使用自旋锁。
+        // 依赖于messageStoreConfig#useReentrantLockWhenPutMessage配置
+        putMessageLock.lock(); //spin or ReentrantLock ,depending on store config // @6
         try {
             long beginLockTimestamp = this.defaultMessageStore.getSystemClock().now();
             this.beginTimeInLock = beginLockTimestamp;
@@ -578,22 +590,30 @@ public class CommitLog {
             // global
             msg.setStoreTimestamp(beginLockTimestamp);
 
+            // 调用 MappedFileQueue.getLastMapedFile 方法获取最后一个文件（即 MappedFile 列表中的最后一个 MappedFile 对象），
+            // 若还没有文件或者已有的最后一个文件已经写满则创建一个新的文件，即创建一个新的 MappedFile 对象并返回
             if (null == mappedFile || mappedFile.isFull()) {
-                mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise
+                mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise // @7
             }
             if (null == mappedFile) {
                 log.error("create mapped file1 error, topic: " + msg.getTopic() + " clientAddr: " + msg.getBornHostString());
+                // 消息写入完成后，先将beginTimeInLock设置为0，然后释放锁。
+                // 该值用来计算消息写入耗时。
+                // 写入新消息前，会根据该值来检查操作系统页写入是否忙，如果上一消息在1s内没有成功写入，则本次消息不再写入，返回页写入忙响应。
                 beginTimeInLock = 0;
                 return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null);
             }
 
-            result = mappedFile.appendMessage(msg, this.appendMessageCallback);
+            // 向commitLog追加消息
+            // 注意，这只是将消息写入writeBuffer/mappedByteBuffer，并没有刷盘
+            result = mappedFile.appendMessage(msg, this.appendMessageCallback); // @8
             switch (result.getStatus()) {
-                case PUT_OK:
+                case PUT_OK: // 消息成功写入
                     break;
-                case END_OF_FILE:
+                case END_OF_FILE: // 当前commitLog可用空间不足
                     unlockMappedFile = mappedFile;
                     // Create a new file, re-write the message
+                    // 创建新的commitLog，重新写入消息
                     mappedFile = this.mappedFileQueue.getLastMappedFile(0);
                     if (null == mappedFile) {
                         // XXX: warn and notify me
@@ -603,11 +623,11 @@ public class CommitLog {
                     }
                     result = mappedFile.appendMessage(msg, this.appendMessageCallback);
                     break;
-                case MESSAGE_SIZE_EXCEEDED:
-                case PROPERTIES_SIZE_EXCEEDED:
+                case MESSAGE_SIZE_EXCEEDED: // 消息长度超过了最大阈值
+                case PROPERTIES_SIZE_EXCEEDED: // 消息属性长度超过了最大阈值
                     beginTimeInLock = 0;
                     return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, result);
-                case UNKNOWN_ERROR:
+                case UNKNOWN_ERROR: // 未知错误
                     beginTimeInLock = 0;
                     return new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, result);
                 default:
@@ -618,57 +638,79 @@ public class CommitLog {
             eclipseTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginLockTimestamp;
             beginTimeInLock = 0;
         } finally {
-            putMessageLock.unlock();
+            putMessageLock.unlock(); // 释放锁
         }
 
         if (eclipseTimeInLock > 500) {
             log.warn("[NOTIFYME]putMessage in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}", eclipseTimeInLock, msg.getBody().length, result);
         }
 
+        // @9
         if (null != unlockMappedFile && this.defaultMessageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {
             this.defaultMessageStore.unlockMappedFile(unlockMappedFile);
         }
 
         PutMessageResult putMessageResult = new PutMessageResult(PutMessageStatus.PUT_OK, result);
 
-        // Statistics
+        // 统计:
+        //      1. 指定topic下写入消息的次数+1
         storeStatsService.getSinglePutMessageTopicTimesTotal(msg.getTopic()).incrementAndGet();
+        //      2. 指定topic下写入消息的总字节数加上当前写入的字节数
         storeStatsService.getSinglePutMessageTopicSizeTotal(topic).addAndGet(result.getWroteBytes());
 
-        handleDiskFlush(result, putMessageResult, msg);
-        handleHA(result, putMessageResult, msg);
+        // 至此，消息并没有真正的写入commitLog文件中，而是在MappedFile#mappedByteBuffer或者MappedFile#writeBuffer缓存中。
+        // 其中，MappedFile#writeBuffer只有仅当transientStorePoolEnable为true，FlushDiskType为异步刷盘（ASYNC_FLUSH），并且为*_Master时，才启用。
+
+        handleDiskFlush(result, putMessageResult, msg); // @10
+        handleHA(result, putMessageResult, msg); // @11
 
         return putMessageResult;
     }
 
     public void handleDiskFlush(AppendMessageResult result, PutMessageResult putMessageResult, MessageExt messageExt) {
         // Synchronization flush
+        // 同步刷盘
         if (FlushDiskType.SYNC_FLUSH == this.defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {
+
+            // 同步刷盘策略在初始化时，初始化的是GroupCommitService实例
             final GroupCommitService service = (GroupCommitService) this.flushCommitLogService;
-            if (messageExt.isWaitStoreMsgOK()) {
+
+            if (messageExt.isWaitStoreMsgOK()) { // 1.「同步阻塞」等待消息刷盘成功。线程会阻塞，直至收到消息刷盘成功的通知；
+
+                // 创建同步阻塞刷盘请求
                 GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());
+                // 添加刷盘请求，并唤醒刷盘服务线程
                 service.putRequest(request);
+
+                // 因为是同步阻塞刷盘，所以需要等待刷盘成功的通知
                 boolean flushOK = request.waitForFlush(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
                 if (!flushOK) {
                     log.error("do groupcommit, wait for flush failed, topic: " + messageExt.getTopic() + " tags: " + messageExt.getTags()
-                        + " client address: " + messageExt.getBornHostString());
+                            + " client address: " + messageExt.getBornHostString());
                     putMessageResult.setPutMessageStatus(PutMessageStatus.FLUSH_DISK_TIMEOUT);
                 }
-            } else {
-                service.wakeup();
+            } else { // 2.「同步非阻塞」不等待消息刷盘成功。线程会继续执行；
+                service.wakeup(); // 唤醒刷盘服务线程
             }
         }
         // Asynchronous flush
+        // 异步刷盘
         else {
+            // 仅当transientStorePoolEnable为true，FlushDiskType为异步刷盘（ASYNC_FLUSH），并且为*_Master时，才启用writeBuffer。
             if (!this.defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
-                flushCommitLogService.wakeup();
+                // 1.未启用writeBuffer
+                // 异步刷盘策略在初始化时，初始化的是FlushRealTimeService实例
+                flushCommitLogService.wakeup(); // @1
             } else {
-                commitLogService.wakeup();
+                // 2.启用writeBuffer
+                // 启用writeBuffer时，需要提交数据到fileChannel，然后再刷盘
+                commitLogService.wakeup(); // @2
             }
         }
     }
 
     public void handleHA(AppendMessageResult result, PutMessageResult putMessageResult, MessageExt messageExt) {
+        // 高可用是由Master处理的
         if (BrokerRole.SYNC_MASTER == this.defaultMessageStore.getMessageStoreConfig().getBrokerRole()) {
             HAService service = this.defaultMessageStore.getHaService();
             if (messageExt.isWaitStoreMsgOK()) {
@@ -678,10 +720,10 @@ public class CommitLog {
                     service.putRequest(request);
                     service.getWaitNotifyObject().wakeupAll();
                     boolean flushOK =
-                        request.waitForFlush(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
+                            request.waitForFlush(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
                     if (!flushOK) {
                         log.error("do sync transfer other node, wait return, but failed, topic: " + messageExt.getTopic() + " tags: "
-                            + messageExt.getTags() + " client address: " + messageExt.getBornHostNameString());
+                                + messageExt.getTags() + " client address: " + messageExt.getBornHostNameString());
                         putMessageResult.setPutMessageStatus(PutMessageStatus.FLUSH_SLAVE_TIMEOUT);
                     }
                 }
@@ -913,13 +955,15 @@ public class CommitLog {
         public void run() {
             CommitLog.log.info(this.getServiceName() + " service started");
             while (!this.isStopped()) {
+                // 提交数据到FileChannel的超时等待时间，默认200毫秒
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitIntervalCommitLog();
-
+                // 提交数据到fileChannel时所提交的最少内存页数，默认4
                 int commitDataLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitCommitLogLeastPages();
 
                 int commitDataThoroughInterval =
-                    CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitCommitLogThoroughInterval();
+                        CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitCommitLogThoroughInterval();
 
+                // @1
                 long begin = System.currentTimeMillis();
                 if (begin >= (this.lastCommitTimestamp + commitDataThoroughInterval)) {
                     this.lastCommitTimestamp = begin;
@@ -929,21 +973,23 @@ public class CommitLog {
                 try {
                     boolean result = CommitLog.this.mappedFileQueue.commit(commitDataLeastPages);
                     long end = System.currentTimeMillis();
-                    if (!result) {
+                    if (!result) { // result为false，意味着有新的数据提交，则需要刷盘
                         this.lastCommitTimestamp = end; // result = false means some data committed.
-                        //now wake up flush thread.
-                        flushCommitLogService.wakeup();
+                        // now wake up flush thread.
+                        flushCommitLogService.wakeup(); // @2
                     }
 
                     if (end - begin > 500) {
                         log.info("Commit data to file costs {} ms", end - begin);
                     }
-                    this.waitForRunning(interval);
+
+                    this.waitForRunning(interval); // @3
                 } catch (Throwable e) {
                     CommitLog.log.error(this.getServiceName() + " service has exception. ", e);
                 }
             }
 
+            // @4
             boolean result = false;
             for (int i = 0; i < RETRY_TIMES_OVER && !result; i++) {
                 result = CommitLog.this.mappedFileQueue.commit(0);
@@ -961,13 +1007,16 @@ public class CommitLog {
             CommitLog.log.info(this.getServiceName() + " service started");
 
             while (!this.isStopped()) {
+                // 是否是定时刷盘。默认是实时刷盘
                 boolean flushCommitLogTimed = CommitLog.this.defaultMessageStore.getMessageStoreConfig().isFlushCommitLogTimed();
 
+                // 刷盘的超时等待时间，默认500毫秒
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushIntervalCommitLog();
+                // 刷盘的最少内存页数，默认4
                 int flushPhysicQueueLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogLeastPages();
 
                 int flushPhysicQueueThoroughInterval =
-                    CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogThoroughInterval();
+                        CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogThoroughInterval();
 
                 boolean printFlushProgress = false;
 
@@ -980,9 +1029,9 @@ public class CommitLog {
                 }
 
                 try {
-                    if (flushCommitLogTimed) {
+                    if (flushCommitLogTimed) { // 定时刷盘
                         Thread.sleep(interval);
-                    } else {
+                    } else { // 实时刷盘，依赖CommitRealTimeService唤醒、等待超时或者中断
                         this.waitForRunning(interval);
                     }
 
@@ -992,10 +1041,12 @@ public class CommitLog {
 
                     long begin = System.currentTimeMillis();
                     CommitLog.this.mappedFileQueue.flush(flushPhysicQueueLeastPages);
-                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();
+
+                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp(); // 当前已刷盘的最后一条消息存储的时间戳
                     if (storeTimestamp > 0) {
                         CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);
                     }
+
                     long past = System.currentTimeMillis() - begin;
                     if (past > 500) {
                         log.info("Flush data to disk costs {} ms", past);
@@ -1007,6 +1058,7 @@ public class CommitLog {
             }
 
             // Normal shutdown, to ensure that all the flush before exit
+            // 正常shutdown，确保退出前全部刷盘
             boolean result = false;
             for (int i = 0; i < RETRY_TIMES_OVER && !result; i++) {
                 result = CommitLog.this.mappedFileQueue.flush(0);
@@ -1049,11 +1101,13 @@ public class CommitLog {
 
         public void wakeupCustomer(final boolean flushOK) {
             this.flushOK = flushOK;
+            // 刷盘完成，唤醒当前刷盘请求所在线程
             this.countDownLatch.countDown();
         }
 
         public boolean waitForFlush(long timeout) {
             try {
+                // 等待异步线程刷盘成功的通知
                 this.countDownLatch.await(timeout, TimeUnit.MILLISECONDS);
                 return this.flushOK;
             } catch (InterruptedException e) {
@@ -1067,15 +1121,21 @@ public class CommitLog {
      * GroupCommit Service
      */
     class GroupCommitService extends FlushCommitLogService {
-        private volatile List<GroupCommitRequest> requestsWrite = new ArrayList<GroupCommitRequest>();
+        private volatile List<GroupCommitRequest> requestsWrite = new ArrayList<GroupCommitRequest>(); // 刷盘请求列表
         private volatile List<GroupCommitRequest> requestsRead = new ArrayList<GroupCommitRequest>();
 
+        /**
+         * 添加刷盘请求，并唤醒刷盘服务线程
+         *
+         * @param request
+         */
         public synchronized void putRequest(final GroupCommitRequest request) {
             synchronized (this.requestsWrite) {
-                this.requestsWrite.add(request);
+                this.requestsWrite.add(request); // 添加刷盘请求
             }
+            // 有新的刷盘请求，如果当前没有其它的刷盘请求通知刷盘服务线程，则会通知；
             if (hasNotified.compareAndSet(false, true)) {
-                waitPoint.countDown(); // notify
+                waitPoint.countDown(); // 通知刷盘服务线程
             }
         }
 
@@ -1087,32 +1147,34 @@ public class CommitLog {
 
         private void doCommit() {
             synchronized (this.requestsRead) {
-                if (!this.requestsRead.isEmpty()) {
+                if (!this.requestsRead.isEmpty()) { // 同步阻塞刷盘
                     for (GroupCommitRequest req : this.requestsRead) {
                         // There may be a message in the next file, so a maximum of
                         // two times the flush
+                        // 执行两次刷盘，可能因为当前待刷盘的commitLog空间不足，当前待刷盘的消息被写到了下一个MappedFile
                         boolean flushOK = false;
                         for (int i = 0; i < 2 && !flushOK; i++) {
+                            // @@1
                             flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() >= req.getNextOffset();
 
                             if (!flushOK) {
-                                CommitLog.this.mappedFileQueue.flush(0);
+                                CommitLog.this.mappedFileQueue.flush(0); // @@2
                             }
                         }
 
-                        req.wakeupCustomer(flushOK);
+                        req.wakeupCustomer(flushOK); // @@3
                     }
 
-                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();
+                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp(); // 当前已刷盘的最后一条消息存储的时间戳
                     if (storeTimestamp > 0) {
                         CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);
                     }
 
-                    this.requestsRead.clear();
-                } else {
+                    this.requestsRead.clear(); // 清空正在刷盘的请求队列
+                } else { // 同步非阻塞刷盘
                     // Because of individual messages is set to not sync flush, it
                     // will come to this process
-                    CommitLog.this.mappedFileQueue.flush(0);
+                    CommitLog.this.mappedFileQueue.flush(0); // @@4
                 }
             }
         }
@@ -1122,8 +1184,8 @@ public class CommitLog {
 
             while (!this.isStopped()) {
                 try {
-                    this.waitForRunning(10);
-                    this.doCommit();
+                    this.waitForRunning(10); // @1
+                    this.doCommit(); // @2
                 } catch (Exception e) {
                     CommitLog.log.warn(this.getServiceName() + " service has exception. ", e);
                 }
@@ -1131,6 +1193,8 @@ public class CommitLog {
 
             // Under normal circumstances shutdown, wait for the arrival of the
             // request, and then flush
+            // 在正常情况下停止服务，会等待请求到达，然后刷盘
+
             try {
                 Thread.sleep(10);
             } catch (InterruptedException e) {
@@ -1164,22 +1228,36 @@ public class CommitLog {
 
     class DefaultAppendMessageCallback implements AppendMessageCallback {
         // File at the end of the minimum fixed length empty
+        // 至少预留8个字节
         private static final int END_FILE_MIN_BLANK_LENGTH = 4 + 4;
+        // 消息ID的buffer，默认16字节
         private final ByteBuffer msgIdMemory;
         // Store the message content
+        // 临时保存单个消息的buffer，默认4M，此外还会多分配8个字节
         private final ByteBuffer msgStoreItemMemory;
         // The maximum length of the message
+        // 消息长度的最大阈值，默认4M
         private final int maxMessageSize;
         // Build Message Key
+        // 构建消息key，格式为"topic-queueId"
         private final StringBuilder keyBuilder = new StringBuilder();
-
+        // 构建msgId，处理批量消息时调用
         private final StringBuilder msgIdBuilder = new StringBuilder();
 
+        // host保存在前四个字节，port保存在后四个字节
         private final ByteBuffer hostHolder = ByteBuffer.allocate(8);
 
+        /**
+         * 该构造函数在CommitLog构造函数中调用，用来构造DefaultAppendMessageCallback对象
+         *
+         * @param size 允许的最大消息长度，默认4M
+         */
         DefaultAppendMessageCallback(final int size) {
+            // 初始化消息ID的buffer，默认16字节，前4字节为host，5～8字节为port，最后8字节为wroteOffset
             this.msgIdMemory = ByteBuffer.allocate(MessageDecoder.MSG_ID_LENGTH);
+            // 分配临时保存单个消息的buffer，默认4M，此外还会多分配8个字节
             this.msgStoreItemMemory = ByteBuffer.allocate(size + END_FILE_MIN_BLANK_LENGTH);
+            // 消息长度的最大阈值，默认4M
             this.maxMessageSize = size;
         }
 
@@ -1187,18 +1265,29 @@ public class CommitLog {
             return msgStoreItemMemory;
         }
 
+        /**
+         *
+         * @param fileFromOffset commitLog文件起始偏移量。其实就是文件名称，一般为20位数字，代表这个文件开始时的offset
+         * @param byteBuffer 写消息缓冲区（MappedFile#writeBuffer or MappedFile#mappedByteBuffer）
+         * @param maxBlank 写消息缓冲区剩余可用空间大小
+         * @param msgInner 消息
+         * @return
+         */
         public AppendMessageResult doAppend(final long fileFromOffset, final ByteBuffer byteBuffer, final int maxBlank,
-            final MessageExtBrokerInner msgInner) {
+                                            final MessageExtBrokerInner msgInner) {
             // STORETIMESTAMP + STOREHOSTADDRESS + OFFSET <br>
 
             // PHY OFFSET
+            // 消息写入的物理偏移量（commitLog文件（对应一个MappedFile）对应的起始偏移量 + 当前MappedFile的写位置）
             long wroteOffset = fileFromOffset + byteBuffer.position();
 
-            this.resetByteBuffer(hostHolder, 8);
-            String msgId = MessageDecoder.createMessageId(this.msgIdMemory, msgInner.getStoreHostBytes(hostHolder), wroteOffset);
+            // 将hostHolder重置，使其可以再次使用
+            this.resetByteBuffer(hostHolder, 8); // @1
+            // 生成消息ID，前4字节为存储地址的host，5～8字节为存储地址的port，最后8字节为wroteOffset
+            String msgId = MessageDecoder.createMessageId(this.msgIdMemory, msgInner.getStoreHostBytes(hostHolder), wroteOffset); // @2
 
             // Record ConsumeQueue information
-            keyBuilder.setLength(0);
+            keyBuilder.setLength(0); // @3
             keyBuilder.append(msgInner.getTopic());
             keyBuilder.append('-');
             keyBuilder.append(msgInner.getQueueId());
@@ -1213,7 +1302,7 @@ public class CommitLog {
             final int tranType = MessageSysFlag.getTransactionValue(msgInner.getSysFlag());
             switch (tranType) {
                 // Prepared and Rollback message is not consumed, will not enter the
-                // consumer queuec
+                // consumer queue
                 case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
                 case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
                     queueOffset = 0L;
@@ -1227,9 +1316,11 @@ public class CommitLog {
             /**
              * Serialize message
              */
+            // propertiesString bytes
             final byte[] propertiesData =
-                msgInner.getPropertiesString() == null ? null : msgInner.getPropertiesString().getBytes(MessageDecoder.CHARSET_UTF8);
+                    msgInner.getPropertiesString() == null ? null : msgInner.getPropertiesString().getBytes(MessageDecoder.CHARSET_UTF8);
 
+            // propertiesString bytes length
             final int propertiesLength = propertiesData == null ? 0 : propertiesData.length;
 
             if (propertiesLength > Short.MAX_VALUE) {
@@ -1237,87 +1328,117 @@ public class CommitLog {
                 return new AppendMessageResult(AppendMessageStatus.PROPERTIES_SIZE_EXCEEDED);
             }
 
+            // topic bytes
             final byte[] topicData = msgInner.getTopic().getBytes(MessageDecoder.CHARSET_UTF8);
+            // topic bytes length
             final int topicLength = topicData.length;
 
+            // body bytes length
             final int bodyLength = msgInner.getBody() == null ? 0 : msgInner.getBody().length;
 
-            final int msgLen = calMsgLength(bodyLength, topicLength, propertiesLength);
+            // 计算消息长度，即写入commitLog占用的空间
+            final int msgLen = calMsgLength(bodyLength, topicLength, propertiesLength); // @4
 
             // Exceeds the maximum message
+            // 消息长度超过了最大阈值
             if (msgLen > this.maxMessageSize) {
                 CommitLog.log.warn("message size exceeded, msg total size: " + msgLen + ", msg body size: " + bodyLength
-                    + ", maxMessageSize: " + this.maxMessageSize);
+                        + ", maxMessageSize: " + this.maxMessageSize);
                 return new AppendMessageResult(AppendMessageStatus.MESSAGE_SIZE_EXCEEDED);
             }
 
             // Determines whether there is sufficient free space
-            if ((msgLen + END_FILE_MIN_BLANK_LENGTH) > maxBlank) {
+            // 确定是否有足够的可用空间
+            // @5
+            if ((msgLen + END_FILE_MIN_BLANK_LENGTH) > maxBlank) { // 没有足够的可用空间
                 this.resetByteBuffer(this.msgStoreItemMemory, maxBlank);
                 // 1 TOTALSIZE
-                this.msgStoreItemMemory.putInt(maxBlank);
+                this.msgStoreItemMemory.putInt(maxBlank); // 剩余可用空间的总长度
                 // 2 MAGICCODE
-                this.msgStoreItemMemory.putInt(CommitLog.BLANK_MAGIC_CODE);
+                this.msgStoreItemMemory.putInt(CommitLog.BLANK_MAGIC_CODE); // 魔数，标记commitLog文件结尾
                 // 3 The remaining space may be any value
                 // Here the length of the specially set maxBlank
                 final long beginTimeMills = CommitLog.this.defaultMessageStore.now();
                 byteBuffer.put(this.msgStoreItemMemory.array(), 0, maxBlank);
+                // 返回END_OF_FILE响应
                 return new AppendMessageResult(AppendMessageStatus.END_OF_FILE, wroteOffset, maxBlank, msgId, msgInner.getStoreTimestamp(),
-                    queueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
+                        queueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
             }
 
             // Initialization of storage space
             this.resetByteBuffer(msgStoreItemMemory, msgLen);
             // 1 TOTALSIZE
-            this.msgStoreItemMemory.putInt(msgLen);
+            this.msgStoreItemMemory.putInt(msgLen); // 代表消息的大小
             // 2 MAGICCODE
-            this.msgStoreItemMemory.putInt(CommitLog.MESSAGE_MAGIC_CODE);
+            this.msgStoreItemMemory.putInt(CommitLog.MESSAGE_MAGIC_CODE); // 魔数，标记消息
             // 3 BODYCRC
-            this.msgStoreItemMemory.putInt(msgInner.getBodyCRC());
+            this.msgStoreItemMemory.putInt(msgInner.getBodyCRC()); // 消息体循环冗余校验码
             // 4 QUEUEID
-            this.msgStoreItemMemory.putInt(msgInner.getQueueId());
+            this.msgStoreItemMemory.putInt(msgInner.getQueueId()); // 消息队列ID
             // 5 FLAG
-            this.msgStoreItemMemory.putInt(msgInner.getFlag());
+            this.msgStoreItemMemory.putInt(msgInner.getFlag()); //﻿标记位
             // 6 QUEUEOFFSET
-            this.msgStoreItemMemory.putLong(queueOffset);
+            this.msgStoreItemMemory.putLong(queueOffset); //﻿这是个自增值，不是真正的 consumeQueue 的偏移量，可以代表这个 consumeQueue 或者 tranStateTable 队列中消息的个数。
             // 7 PHYSICALOFFSET
-            this.msgStoreItemMemory.putLong(fileFromOffset + byteBuffer.position());
+            this.msgStoreItemMemory.putLong(fileFromOffset + byteBuffer.position()); //﻿消息写入的物理偏移量（（commitLog文件（对应一个MappedFile）对应的起始偏移量 + 当前MappedFile的写位置））
             // 8 SYSFLAG
+            /*
+                指明消息是否是事务消息，以及事务状态等消息特征，二进制表示形式为四个字节，
+                从右往左数：
+                    当 4 个字节均为 0（值为 0）时表示非事务消息（TRANSACTION_NOT_TYPE）；
+                    当第 1 个字节为 1（值为 1）时表示表示消息是压缩的（COMPRESSED_FLAG）；
+                    当第 2 个字节为 1（值为 2）表示 multi 消息（MULTI_TAGS_FLAG）；
+                    当第 3 个字节为 1（值为 4）时表示 prepared 消息（TRANSACTION_PREPARED_TYPE）；
+                    当第 4 个字节为 1（值为 8）时表示 commit 消息（TRANSACTION_COMMIT_TYPE）；
+                    当第 3/4 个字节均为 1 时（值为 12）时表示 rollback 消息（TRANSACTION_ROLLBACK_TYPE）；
+                    当第 3/4 个字节均为 0 时表示非事务消息；
+             */
             this.msgStoreItemMemory.putInt(msgInner.getSysFlag());
             // 9 BORNTIMESTAMP
-            this.msgStoreItemMemory.putLong(msgInner.getBornTimestamp());
+            this.msgStoreItemMemory.putLong(msgInner.getBornTimestamp()); // 客户端创建时间戳
             // 10 BORNHOST
             this.resetByteBuffer(hostHolder, 8);
-            this.msgStoreItemMemory.put(msgInner.getBornHostBytes(hostHolder));
+            this.msgStoreItemMemory.put(msgInner.getBornHostBytes(hostHolder)); // 客户端地址，前4字节为host，后4字节为port
             // 11 STORETIMESTAMP
-            this.msgStoreItemMemory.putLong(msgInner.getStoreTimestamp());
+            this.msgStoreItemMemory.putLong(msgInner.getStoreTimestamp()); //﻿消息在broker存储时间戳
             // 12 STOREHOSTADDRESS
             this.resetByteBuffer(hostHolder, 8);
-            this.msgStoreItemMemory.put(msgInner.getStoreHostBytes(hostHolder));
+            this.msgStoreItemMemory.put(msgInner.getStoreHostBytes(hostHolder)); //﻿存储在broker的地址，前4字节为host，后4字节为port
             //this.msgBatchMemory.put(msgInner.getStoreHostBytes());
             // 13 RECONSUMETIMES
-            this.msgStoreItemMemory.putInt(msgInner.getReconsumeTimes());
+            this.msgStoreItemMemory.putInt(msgInner.getReconsumeTimes()); //﻿消息被某个订阅组重新消费了几次（订阅组之间独立计数），因为重试消息发送到了topic为%retry%groupName、queueId=0的队列中去了，成功消费一次记录为0；
             // 14 Prepared Transaction Offset
-            this.msgStoreItemMemory.putLong(msgInner.getPreparedTransactionOffset());
+            this.msgStoreItemMemory.putLong(msgInner.getPreparedTransactionOffset()); // 表示是prepared状态的事务消息
             // 15 BODY
-            this.msgStoreItemMemory.putInt(bodyLength);
+            this.msgStoreItemMemory.putInt(bodyLength); //﻿消息体大小
             if (bodyLength > 0)
-                this.msgStoreItemMemory.put(msgInner.getBody());
+                this.msgStoreItemMemory.put(msgInner.getBody()); // 消息体内容
             // 16 TOPIC
-            this.msgStoreItemMemory.put((byte) topicLength);
-            this.msgStoreItemMemory.put(topicData);
+            this.msgStoreItemMemory.put((byte) topicLength); // topic大小
+            this.msgStoreItemMemory.put(topicData); // topic内容
             // 17 PROPERTIES
-            this.msgStoreItemMemory.putShort((short) propertiesLength);
+            this.msgStoreItemMemory.putShort((short) propertiesLength); //﻿消息属性大小
             if (propertiesLength > 0)
-                this.msgStoreItemMemory.put(propertiesData);
+                this.msgStoreItemMemory.put(propertiesData); // 消息属性内容
 
             final long beginTimeMills = CommitLog.this.defaultMessageStore.now();
             // Write messages to the queue buffer
             byteBuffer.put(this.msgStoreItemMemory.array(), 0, msgLen);
 
+            /*
+                AppendMessageResult响应相关字段：
+                       AppendMessageStatus status   响应状态码,
+                       long wroteOffset             消息写入的物理偏移量（commitLog文件（对应一个MappedFile）对应的起始偏移量 + 当前MappedFile的写位置）,
+                       int wroteBytes               写入总字节数，即写入commitLog占用的空间。注意，有可能会同时写入多条消息，所以这里是写入的总字节数,
+                       String msgId                 消息ID，前4字节为存储地址的host，5～8字节为存储地址的port，最后8字节为wroteOffset,
+                       long storeTimestamp          消息存储时间戳,
+                       long logicsOffset            逻辑偏移量，即消息保存到consumeQueue的offset,
+                       long pagecacheRT             消息写入PageCache花费的时间
+             */
             AppendMessageResult result = new AppendMessageResult(AppendMessageStatus.PUT_OK, wroteOffset, msgLen, msgId,
-                msgInner.getStoreTimestamp(), queueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
+                    msgInner.getStoreTimestamp(), queueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
 
+            // @6
             switch (tranType) {
                 case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
                 case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
@@ -1334,7 +1455,7 @@ public class CommitLog {
         }
 
         public AppendMessageResult doAppend(final long fileFromOffset, final ByteBuffer byteBuffer, final int maxBlank,
-            final MessageExtBatch messageExtBatch) {
+                                            final MessageExtBatch messageExtBatch) {
             byteBuffer.mark();
             //physical offset
             long wroteOffset = fileFromOffset + byteBuffer.position();
@@ -1366,7 +1487,7 @@ public class CommitLog {
                 // Exceeds the maximum message
                 if (msgLen > this.maxMessageSize) {
                     CommitLog.log.warn("message size exceeded, msg total size: " + msgLen + ", msg body size: " + bodyLen
-                        + ", maxMessageSize: " + this.maxMessageSize);
+                            + ", maxMessageSize: " + this.maxMessageSize);
                     return new AppendMessageResult(AppendMessageStatus.MESSAGE_SIZE_EXCEEDED);
                 }
                 totalMsgLen += msgLen;
@@ -1384,7 +1505,7 @@ public class CommitLog {
                     byteBuffer.reset(); //ignore the previous appended messages
                     byteBuffer.put(this.msgStoreItemMemory.array(), 0, 8);
                     return new AppendMessageResult(AppendMessageStatus.END_OF_FILE, wroteOffset, maxBlank, msgIdBuilder.toString(), messageExtBatch.getStoreTimestamp(),
-                        beginQueueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
+                            beginQueueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
                 }
                 //move to add queue offset and commitlog offset
                 messagesByteBuff.position(msgPos + 20);
@@ -1408,13 +1529,21 @@ public class CommitLog {
             byteBuffer.put(messagesByteBuff);
             messageExtBatch.setEncodedBuff(null);
             AppendMessageResult result = new AppendMessageResult(AppendMessageStatus.PUT_OK, wroteOffset, totalMsgLen, msgIdBuilder.toString(),
-                messageExtBatch.getStoreTimestamp(), beginQueueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
+                    messageExtBatch.getStoreTimestamp(), beginQueueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
             result.setMsgNum(msgNum);
             CommitLog.this.topicQueueTable.put(key, queueOffset);
 
             return result;
         }
 
+        /**
+         * 将buffer重置，使其可以再次使用。
+         * <p>
+         * 具体的，将limit、position、mark设置为初始值。
+         *
+         * @param byteBuffer 待重置的buffer
+         * @param limit
+         */
         private void resetByteBuffer(final ByteBuffer byteBuffer, final int limit) {
             byteBuffer.flip();
             byteBuffer.limit(limit);
@@ -1467,7 +1596,7 @@ public class CommitLog {
                 // Exceeds the maximum message
                 if (msgLen > this.maxMessageSize) {
                     CommitLog.log.warn("message size exceeded, msg total size: " + msgLen + ", msg body size: " + bodyLen
-                        + ", maxMessageSize: " + this.maxMessageSize);
+                            + ", maxMessageSize: " + this.maxMessageSize);
                     throw new RuntimeException("message size exceeded");
                 }
 

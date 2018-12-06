@@ -63,7 +63,7 @@ import static org.apache.rocketmq.store.config.BrokerRole.SLAVE;
 public class DefaultMessageStore implements MessageStore {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
-    // 存储相关的配置，例如存储路径、commitLog文件大小，刷盘频次等等
+    // 消息存储相关的配置，例如存储路径、commitLog文件大小，刷盘频次等等
     private final MessageStoreConfig messageStoreConfig;
     // CommitLog
     // commitLog的核心处理类，消息存储在commitLog文件中
@@ -100,7 +100,7 @@ public class DefaultMessageStore implements MessageStore {
     // 对消息的存储耗时进行分级记录，并记录当前所有消息存储的最大耗时
     private final StoreStatsService storeStatsService;
 
-    //
+    // 堆外内存池
     private final TransientStorePool transientStorePool;
 
     // 存储服务运行状态
@@ -155,10 +155,12 @@ public class DefaultMessageStore implements MessageStore {
 
         this.transientStorePool = new TransientStorePool(messageStoreConfig);
 
+        // 初始化transientStorePool，分配poolSize个fileSize大小的堆外空间
         if (messageStoreConfig.isTransientStorePoolEnable()) {
             this.transientStorePool.init();
         }
 
+        // 启动MappedFile分配线程
         this.allocateMappedFileService.start();
 
         this.indexService.start();
@@ -339,7 +341,7 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         // 如果服务不可写，则putMessage操作会被禁止
-        if (!this.runningFlags.isWriteable()) {
+        if (!this.runningFlags.isWriteable()) { // @1
             long value = this.printTimes.getAndIncrement();
             if ((value % 50000) == 0) {
                 log.warn("message store is not writeable, so putMessage is forbidden " + this.runningFlags.getFlagBits());
@@ -362,23 +364,23 @@ public class DefaultMessageStore implements MessageStore {
             return new PutMessageResult(PutMessageStatus.PROPERTIES_SIZE_EXCEEDED, null);
         }
 
-        // 检测操作系统页写入是否忙
-        // 返回true，意味着一条消息存储的时间超过了1s，这是有问题的
-        if (this.isOSPageCacheBusy()) { // @1
+        // 检查操作系统页写入是否忙
+        // 如果返回true，意味着此时有消息在写入commitLog，而那条消息存储的时间超过了1s，则本条消息不再写入，返回页写入忙响应。
+        if (this.isOSPageCacheBusy()) { // @2
             return new PutMessageResult(PutMessageStatus.OS_PAGECACHE_BUSY, null);
         }
 
         long beginTime = this.getSystemClock().now();
-        // 将日志写入CommitLog文件
+        // 将消息写入CommitLog文件
         PutMessageResult result = this.commitLog.putMessage(msg);
 
         long eclipseTime = this.getSystemClock().now() - beginTime;
         if (eclipseTime > 500) {
             log.warn("putMessage not in lock eclipse time(ms)={}, bodyLength={}", eclipseTime, msg.getBody().length);
         }
-        // 记录相关统计信息
-        // 对消息的存储耗时进行分级记录，并记录当前所有消息存储的最大耗时
-        this.storeStatsService.setPutMessageEntireTimeMax(eclipseTime); // @2
+
+        // 对消息的存储耗时进行分级记录，并记录当前所有消息存储耗时中的最大耗时
+        this.storeStatsService.setPutMessageEntireTimeMax(eclipseTime); // @3
 
         // 记录写commitlog失败次数
         if (null == result || !result.isOk()) {
@@ -444,13 +446,23 @@ public class DefaultMessageStore implements MessageStore {
         return result;
     }
 
+    /**
+     * 检查操作系统页写入是否忙
+     *
+     * 如果返回true，意味着此时有消息在写入commitLog，而那条消息存储的时间超过了1s
+     *
+     * @return
+     */
     @Override
     public boolean isOSPageCacheBusy() {
+        // 当有消息写入commitLog时，会先加锁，然后将beginTimeInLock设置为当前时间。
+        // 消息写入完成后，先将beginTimeInLock设置为0，然后释放锁。
+        // 也就是说没有消息写入时，beginTimeInLock为0。
         long begin = this.getCommitLog().getBeginTimeInLock();
         long diff = this.systemClock.now() - begin;
 
-        return diff < 10000000
-                && diff > this.messageStoreConfig.getOsPageCacheBusyTimeOutMills();
+        return diff < 10000000 // 这里就是为了考虑到没有消息写入时的情况
+                && diff > this.messageStoreConfig.getOsPageCacheBusyTimeOutMills(); // 意味着此时有消息在写入commitLog，而那条消息存储的时间超过了1s
     }
 
     @Override

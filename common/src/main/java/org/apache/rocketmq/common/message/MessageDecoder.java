@@ -56,7 +56,16 @@ public class MessageDecoder {
         + 4 // 13 RECONSUMETIMES
         + 8; // 14 Prepared Transaction Offset
 
+    /**
+     * 生成消息ID，前4字节为存储地址的host，5～8字节为存储地址的port，最后8字节为wroteOffset
+     *
+     * @param input 初始化消息ID的buffer，默认16字节
+     * @param addr hostHolder buffer，保存host、port
+     * @param offset wroteOffset，消息写入的物理偏移量（commitLog文件（对应一个MappedFile）对应的起始偏移量 + 当前MappedFile的写位置）
+     * @return
+     */
     public static String createMessageId(final ByteBuffer input, final ByteBuffer addr, final long offset) {
+        // see resetByteBuffer
         input.flip();
         input.limit(MessageDecoder.MSG_ID_LENGTH);
 

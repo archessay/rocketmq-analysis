@@ -64,11 +64,18 @@ public class MessageExt extends Message {
         return TopicFilterType.SINGLE_TAG;
     }
 
+    /**
+     * 从消息的SocketAddress获取host保存到buffer的前四个字节，port保存到后四个字节
+     *
+     * @param socketAddress 消息的SocketAddress
+     * @param byteBuffer hostHolder buffer，用来保存host、port
+     * @return
+     */
     public static ByteBuffer socketAddress2ByteBuffer(final SocketAddress socketAddress, final ByteBuffer byteBuffer) {
         InetSocketAddress inetSocketAddress = (InetSocketAddress) socketAddress;
         byteBuffer.put(inetSocketAddress.getAddress().getAddress(), 0, 4);
         byteBuffer.putInt(inetSocketAddress.getPort());
-        byteBuffer.flip();
+        byteBuffer.flip(); // 由写状态变为读状态
         return byteBuffer;
     }
 
@@ -81,6 +88,12 @@ public class MessageExt extends Message {
         return socketAddress2ByteBuffer(this.bornHost);
     }
 
+    /**
+     * 从消息的bornHost中获取host保存到buffer的前四个字节，port保存到后四个字节
+     *
+     * @param byteBuffer hostHolder buffer，用来保存host、port
+     * @return
+     */
     public ByteBuffer getBornHostBytes(ByteBuffer byteBuffer) {
         return socketAddress2ByteBuffer(this.bornHost, byteBuffer);
     }
@@ -89,6 +102,12 @@ public class MessageExt extends Message {
         return socketAddress2ByteBuffer(this.storeHost);
     }
 
+    /**
+     * 从消息的storeHost中获取host保存到buffer的前四个字节，port保存到后四个字节
+     *
+     * @param byteBuffer hostHolder buffer，用来保存host、port
+     * @return
+     */
     public ByteBuffer getStoreHostBytes(ByteBuffer byteBuffer) {
         return socketAddress2ByteBuffer(this.storeHost, byteBuffer);
     }

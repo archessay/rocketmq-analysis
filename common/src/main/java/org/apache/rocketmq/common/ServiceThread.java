@@ -27,9 +27,9 @@ public abstract class ServiceThread implements Runnable {
 
     private static final long JOIN_TIME = 90 * 1000;
 
-    protected final Thread thread;
+    protected final Thread thread; // 当前的服务线程
     protected final CountDownLatch2 waitPoint = new CountDownLatch2(1);
-    protected volatile AtomicBoolean hasNotified = new AtomicBoolean(false);
+    protected volatile AtomicBoolean hasNotified = new AtomicBoolean(false); // 标记是否已通知服务线程
     protected volatile boolean stopped = false;
 
     public ServiceThread() {
@@ -97,23 +97,37 @@ public abstract class ServiceThread implements Runnable {
         log.info("makestop thread " + this.getServiceName());
     }
 
+    /**
+     * 如果当前没有其它的请求通知服务线程，则会通知
+     */
     public void wakeup() {
         if (hasNotified.compareAndSet(false, true)) {
             waitPoint.countDown(); // notify
         }
     }
 
+    /**
+     * 如果收到通知，则执行onWaitEnd并返回；否则，超时等待。
+     *
+     * 无论是等待超时、被中断还是被唤醒，都将"已通知状态"置为false，然后执行onWaitEnd并返回。
+     *
+     * @param interval 超时等待时间
+     */
     protected void waitForRunning(long interval) {
+        // 收到通知，则执行onWaitEnd并返回
         if (hasNotified.compareAndSet(true, false)) {
             this.onWaitEnd();
             return;
         }
 
-        //entry to wait
-        waitPoint.reset();
+        // 没有收到通知，进入等待
 
+        // entry to wait
+        waitPoint.reset(); // 重置使其可复用
+
+        // 无论是等待超时、被中断还是被唤醒，都将"已通知状态"置为false，然后执行onWaitEnd并返回
         try {
-            waitPoint.await(interval, TimeUnit.MILLISECONDS);
+            waitPoint.await(interval, TimeUnit.MILLISECONDS); // 超时等待
         } catch (InterruptedException e) {
             log.error("Interrupted", e);
         } finally {
@@ -122,6 +136,9 @@ public abstract class ServiceThread implements Runnable {
         }
     }
 
+    /**
+     * 具体实现参见子类
+     */
     protected void onWaitEnd() {
     }
 

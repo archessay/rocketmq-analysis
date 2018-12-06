@@ -18,15 +18,15 @@ package org.apache.rocketmq.store;
 
 public class RunningFlags {
 
-    private static final int NOT_READABLE_BIT = 1;
+    private static final int NOT_READABLE_BIT = 1;                     // 00001
 
-    private static final int NOT_WRITEABLE_BIT = 1 << 1;
+    private static final int NOT_WRITEABLE_BIT = 1 << 1;               // 00010
 
-    private static final int WRITE_LOGICS_QUEUE_ERROR_BIT = 1 << 2;
+    private static final int WRITE_LOGICS_QUEUE_ERROR_BIT = 1 << 2;    // 00100
 
-    private static final int WRITE_INDEX_FILE_ERROR_BIT = 1 << 3;
+    private static final int WRITE_INDEX_FILE_ERROR_BIT = 1 << 3;      // 01000
 
-    private static final int DISK_FULL_BIT = 1 << 4;
+    private static final int DISK_FULL_BIT = 1 << 4;                   // 10000
 
     private volatile int flagBits = 0;
 

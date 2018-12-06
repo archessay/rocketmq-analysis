@@ -56,8 +56,10 @@ public class StoreStatsService extends ServiceThread {
     private final LinkedList<CallSnapshot> getTimesFoundList = new LinkedList<CallSnapshot>();
     private final LinkedList<CallSnapshot> getTimesMissList = new LinkedList<CallSnapshot>();
     private final LinkedList<CallSnapshot> transferedMsgCountList = new LinkedList<CallSnapshot>();
+    // 对消息的存储耗时进行分级记录，记录每个耗时级别的消息数
     private volatile AtomicLong[] putMessageDistributeTime;
     private long messageStoreBootTimestamp = System.currentTimeMillis();
+    // 记录当前所有消息存储耗时中的最大耗时
     private volatile long putMessageEntireTimeMax = 0;
     private volatile long getMessageEntireTimeMax = 0;
     // for putMessageEntireTimeMax
@@ -93,7 +95,7 @@ public class StoreStatsService extends ServiceThread {
     }
 
     public void setPutMessageEntireTimeMax(long value) {
-        // 对消息的存储耗时进行分级记录
+        // 对消息的存储耗时进行分级记录，记录每个耗时级别的消息数
         final AtomicLong[] times = this.putMessageDistributeTime;
 
         if (null == times)
@@ -138,7 +140,7 @@ public class StoreStatsService extends ServiceThread {
             times[12].incrementAndGet();
         }
 
-        // 记录当前所有消息存储的最大耗时
+        // 记录当前所有消息存储耗时中的最大耗时
         if (value > this.putMessageEntireTimeMax) {
             this.lockPut.lock();
             this.putMessageEntireTimeMax =
@@ -545,6 +547,12 @@ public class StoreStatsService extends ServiceThread {
         return putMessageFailedTimes;
     }
 
+    /**
+     * 获取指定topic下写入消息的总字节数
+     *
+     * @param topic topic
+     * @return
+     */
     public AtomicLong getSinglePutMessageTopicSizeTotal(String topic) {
         AtomicLong rs = putMessageTopicSizeTotal.get(topic);
         if (null == rs) {
@@ -557,6 +565,12 @@ public class StoreStatsService extends ServiceThread {
         return rs;
     }
 
+    /**
+     * 获取指定topic下写入消息的次数
+     *
+     * @param topic topic
+     * @return
+     */
     public AtomicLong getSinglePutMessageTopicTimesTotal(String topic) {
         AtomicLong rs = putMessageTopicTimesTotal.get(topic);
         if (null == rs) {
