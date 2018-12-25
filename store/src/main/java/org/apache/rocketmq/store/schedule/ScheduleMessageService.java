@@ -192,7 +192,7 @@ public class ScheduleMessageService extends ConfigManager {
                 Long tu = timeUnitTable.get(ch);
 
                 int level = i + 1;
-                if (level > this.maxDelayLevel) {
+                if (level > this.maxDelayLevel) { // 更新maxDelayLevel
                     this.maxDelayLevel = level;
                 }
                 long num = Long.parseLong(value.substring(0, value.length() - 1));

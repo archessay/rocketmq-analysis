@@ -44,50 +44,99 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class MappedFile extends ReferenceResource {
 
-    // 默认页大小为4k
+    /**
+     * 内存页大小，默认为4k
+     */
     public static final int OS_PAGE_SIZE = 1024 * 4;
 
     protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
-    // JVM中映射的虚拟内存总大小
-    // 简单说就是所有MappedFile实例已使用的字节总数
+    /**
+     * JVM中映射({@code mmap})的虚拟内存总大小，初始值为 0
+     */
     private static final AtomicLong TOTAL_MAPPED_VIRTUAL_MEMORY = new AtomicLong(0);
 
-    // MappedFile的个数
+    /**
+     * 映射文件的个数，初始值为 0
+     */
     private static final AtomicInteger TOTAL_MAPPED_FILES = new AtomicInteger(0);
-    // 当前MappedFile对象的当前写指针，当值等于fileSize代表文件写满了
-    // 注意，这里记录的不是真正刷入磁盘的位置，而是写入到buffer的位置
+
+    /**
+     * 当前写入的位置，当值等于{@link #fileSize}时代表文件写满了。
+     *
+     * 注意，这里记录的不是真正刷入磁盘的位置，而是写入到{@code buffer}的位置
+     */
     protected final AtomicInteger wrotePosition = new AtomicInteger(0);
-    // 当前提交的位置
-    // 所谓提交就是将writeBuffer的脏数据写到fileChannel
+
+    /**
+     * 当前提交的位置
+     *
+     * 所谓提交就是将{@link #writeBuffer}的脏数据写到{@link #fileChannel}
+     */
     protected final AtomicInteger committedPosition = new AtomicInteger(0);
-    // 当前刷盘的位置
+
+    /**
+     * 当前刷盘的位置
+     */
     private final AtomicInteger flushedPosition = new AtomicInteger(0);
-    // mappedFile文件大小，参照MessageStoreConfig.mapedFileSizeCommitLog，默认1G
+
+    /**
+     * 映射文件的大小，参照{@link org.apache.rocketmq.store.config.MessageStoreConfig#mapedFileSizeCommitLog}，默认1G
+     */
     protected int fileSize;
-    // 对file进行包装，以支持其随机读写。
-    // 通过fileChannel将此通道的文件区域直接映射到内存中，对应的内存映射为mappedByteBuffer，可以直接通过mappedByteBuffer操作commitLog。
+
+    /**
+     * 文件通道，以支持文件的随机读写。
+     *
+     * 通过{@link #fileChannel}将此通道的文件区域直接映射到内存中，对应的内存映射为{@link #mappedByteBuffer}，可以直接通过{@link #mappedByteBuffer}读写CommitLog文件。
+     */
     protected FileChannel fileChannel;
     /**
      * Message will put to here first, and then reput to FileChannel if writeBuffer is not null.
      */
-    // 从transientStorePool中获取，消息先写入该buffer，然后再写入到fileChannel。可能为null
-    // 只有仅当transientStorePoolEnable为true，FlushDiskType为异步刷盘（ASYNC_FLUSH），并且为*_Master时，才启用。
+
+    /**
+     * 从{@link #transientStorePool}中获取，消息先写入该{@code buffer}，然后再写入到{@link #fileChannel}。可能为null。
+     *
+     * 只有仅当{@link org.apache.rocketmq.store.config.MessageStoreConfig#transientStorePoolEnable}为true，刷盘策略为异步刷盘（ASYNC_FLUSH），并且broker为主节点时才启用。
+     */
     protected ByteBuffer writeBuffer = null;
-    // ByteBuffer的缓冲池，一个CommitLog file对应一个DirectByteBuffer
+
+    /**
+     * 堆外线程池
+     */
     protected TransientStorePool transientStorePool = null;
-    // 文件全路径名
+
+    /**
+     * 文件全路径名
+     */
     private String fileName;
-    // commitLog文件起始偏移量
-    // 其实就是文件名称，一般为20位数字，代表这个文件开始时的offset
+
+    /**
+     * CommitLog文件起始偏移量。
+     *
+     * 其实就是文件名称，一般为20位数字，代表这个文件开始时的offset
+     */
     private long fileFromOffset;
-    // 文件对象
+
+    /**
+     * CommitLog文件对象
+     */
     private File file;
-    // fileChannel内存映射
+
+    /**
+     * {@link #fileChannel}的内存映射对象
+     */
     private MappedByteBuffer mappedByteBuffer;
-    // 最后一次存储消息的时间戳
+
+    /**
+     * 最后一次写入消息的时间戳
+     */
     private volatile long storeTimestamp = 0;
-    // 是不是刚刚创建的
+
+    /**
+     * 标记该映射文件是不是队列中创建的第一个映射文件
+     */
     private boolean firstCreateInQueue = false;
 
     public MappedFile() {
@@ -174,10 +223,10 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * 执行初始化
+     * 执行初始化。
      * <p>
-     * 设置transientStorePool；
-     * 设置writeBuffer，从transientStorePool获取
+     * 设置{@link #transientStorePool}；
+     * 设置{@link #writeBuffer}，从{@link #transientStorePool}获取
      *
      * @param fileName
      * @param fileSize
@@ -192,11 +241,11 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * 执行初始化
+     * 执行初始化。
      * <p>
      * 设置文件全路径名；
      * 设置文件大小；
-     * 设置fileFromOffset代表文件对应的偏移量；
+     * 设置{@link #fileFromOffset}代表文件对应的起始偏移量；
      * 获取 fileChannel，mappedByteBuffer 相关IO对象；
      * TOTAL_MAPPED_VIRTUAL_MEMORY,TOTAL_MAPPED_FILES计数更新；
      *
@@ -212,12 +261,12 @@ public class MappedFile extends ReferenceResource {
         boolean ok = false;
 
         // 判断父目录是否存在，如果不存在则创建父目录
-        ensureDirOK(this.file.getParent());
+        ensureDirOK(this.file.getParent()); // @1
 
         try {
             // 对file进行包装，以支持其随机读写
             this.fileChannel = new RandomAccessFile(this.file, "rw").getChannel();
-            // fileChannel内存映射，将此通道的文件区域直接映射到内存中。
+            // fileChannel的内存映射对象，将此通道的文件区域直接映射到内存中。
             this.mappedByteBuffer = this.fileChannel.map(MapMode.READ_WRITE, 0, fileSize);
             TOTAL_MAPPED_VIRTUAL_MEMORY.addAndGet(fileSize);
             TOTAL_MAPPED_FILES.incrementAndGet();
@@ -274,13 +323,13 @@ public class MappedFile extends ReferenceResource {
         assert messageExt != null;
         assert cb != null;
 
-        int currentPos = this.wrotePosition.get(); // 获取当前MappedFile的写位置
+        int currentPos = this.wrotePosition.get(); // 获取当前写入的位置
 
         if (currentPos < this.fileSize) { // 文件还有剩余空间
 
-            // 只有仅当transientStorePoolEnable为true，FlushDiskType为异步刷盘（ASYNC_FLUSH），并且为*_Master时，才启用writeBuffer。
+            // 仅当 transientStorePoolEnable 为 true，刷盘策略为异步刷盘（FlushDiskType 为 ASYNC_FLUSH），并且 broker 为主节点时，才启用 transientStorePool。
 
-            // writeBuffer/mappedByteBuffer的position始终为0，而limit则等于capacity。
+            // writeBuffer/mappedByteBuffer的position始终为0，而limit则始终等于capacity。
             // slice是根据position和limit来生成byteBuffer。
             ByteBuffer byteBuffer = writeBuffer != null ? writeBuffer.slice() : this.mappedByteBuffer.slice(); // @1
             byteBuffer.position(currentPos); // 设置写的起始位置
@@ -294,7 +343,7 @@ public class MappedFile extends ReferenceResource {
             } else {
                 return new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR);
             }
-            this.wrotePosition.addAndGet(result.getWroteBytes()); // 当前MappedFile对象的当前写指针后移至下一消息写入的位置
+            this.wrotePosition.addAndGet(result.getWroteBytes()); // 修改写位置
             this.storeTimestamp = result.getStoreTimestamp();
             return result;
         }
@@ -443,7 +492,7 @@ public class MappedFile extends ReferenceResource {
 
     /**
      * 校验是否有足够的可刷盘的数据。
-     *
+     * <p>
      * 只要该MappedFile已经被写满，即wrotePosition等于fileSize，如果已写满则可执行刷盘；
      * 检查尚未刷盘的消息页数是否大于等于最小刷盘页数，页数不够暂时不刷盘；
      *
@@ -523,15 +572,26 @@ public class MappedFile extends ReferenceResource {
         return null;
     }
 
+    /**
+     * 根据相对偏移量 {@code pos} 获取消息数据。
+     * <p>
+     * 这里获取的是 {@code pos} 与 {@link MappedFile} 当前具有可刷盘数据的最大偏移量之间的消息数据。
+     *
+     * @param pos 映射文件的相对偏移量
+     * @return
+     */
     public SelectMappedBufferResult selectMappedBuffer(int pos) {
-        int readPosition = getReadPosition();
+        int readPosition = getReadPosition(); // 映射文件当前具有可刷盘数据的最大相对偏移量
         if (pos < readPosition && pos >= 0) {
-            if (this.hold()) {
+            if (this.hold()) { // @@1
                 ByteBuffer byteBuffer = this.mappedByteBuffer.slice();
+
+                // 这里获取的是pos与映射文件当前具有可刷盘数据的最大偏移量之间的消息数据
                 byteBuffer.position(pos);
                 int size = readPosition - pos;
                 ByteBuffer byteBufferNew = byteBuffer.slice();
                 byteBufferNew.limit(size);
+
                 return new SelectMappedBufferResult(this.fileFromOffset + pos, byteBufferNew, size, this);
             }
         }
@@ -596,7 +656,7 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * @return 当前具有可刷盘数据的最大偏移量
+     * @return 当前具有可刷盘数据的最大相对偏移量
      */
     public int getReadPosition() {
         // 只有仅当transientStorePoolEnable为true，FlushDiskType为异步刷盘（ASYNC_FLUSH），并且为*_Master时，才启用writeBuffer。
@@ -610,14 +670,14 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * 对当前MappedFile进行预热。
+     * 对当前映射文件进行预热。
      * <p>
-     * 具体的，先对当前MappedFile的每个内存页存入一个字节0，当刷盘策略为同步刷盘时，执行强制刷盘，并且是每修改pages个分页刷一次盘。
-     * 然后将当前MappedFile全部的地址空间锁定在物理存储中，防止其被交换到swap空间。
+     * 具体的，先对当前映射文件的每个内存页写入一个字节0，当刷盘策略为同步刷盘时，执行强制刷盘，并且是每修改pages个分页刷一次盘。
+     * 然后将当前映射文件全部的地址空间锁定在物理存储中，防止其被交换到swap空间。
      * 再调用madvise，传入 WILL_NEED 策略，将刚刚锁住的内存预热，其实就是告诉内核，我马上就要用（WILL_NEED）这块内存，先做虚拟内存到物理内存的映射，防止正式使用时产生缺页中断。
      *
      * @param type  刷盘策略
-     * @param pages 预热时刷盘时，一次刷盘的分页数
+     * @param pages 预热时一次刷盘的分页数
      */
     public void warmMappedFile(FlushDiskType type, int pages) {
         long beginTime = System.currentTimeMillis();
@@ -686,7 +746,7 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * 将当前MappedFile全部的地址空间锁定在物理存储中，防止其被交换到swap空间。
+     * 将当前映射文件全部的地址空间锁定在物理存储中，防止其被交换到swap空间。
      * 再调用madvise，传入 WILL_NEED 策略，将刚刚锁住的内存预热，其实就是告诉内核，我马上就要用（WILL_NEED）这块内存，先做虚拟内存到物理内存的映射，防止正式使用时产生缺页中断。
      */
     public void mlock() {

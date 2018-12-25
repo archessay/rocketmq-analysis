@@ -72,11 +72,12 @@ public class UtilAll {
     }
 
     public static String offset2FileName(final long offset) {
-        final NumberFormat nf = NumberFormat.getInstance(); // 返回当前默认语言环境的通用数值格式。
-        nf.setMinimumIntegerDigits(20); // 设置数的整数部分所允许的最小位数。
-        nf.setMaximumFractionDigits(0); // 设置数的小数部分所允许的最大位数。
+        final NumberFormat nf = NumberFormat.getInstance(); // 返回当前默认语言环境的通用数值格式
+        nf.setMinimumIntegerDigits(20); // 设置数值的整数部分所允许的最小位数。
+        nf.setMaximumFractionDigits(0); // 设置数值的小数部分所允许的最大位数。
         // 设置此格式中是否使用分组。如果此格式中使用了分组，则为 true。
-        // 例如，在 English 语言环境中，如果使用了分组，则数 1234567 将被格式化为 "1,234,567"。组分隔符以及每个组的大小是与语言环境相关的，由 NumberFormat 的子类确定。
+        // 例如，在 English 语言环境中，如果使用了分组，则数 1234567 将被格式化为 "1,234,567"。
+        // 组分隔符以及每个组的大小是与语言环境相关的，由 NumberFormat 的子类确定。
         nf.setGroupingUsed(false);
         return nf.format(offset);
     }

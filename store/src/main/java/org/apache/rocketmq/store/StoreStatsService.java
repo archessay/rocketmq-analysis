@@ -566,7 +566,7 @@ public class StoreStatsService extends ServiceThread {
     }
 
     /**
-     * 获取指定topic下写入消息的次数
+     * 获取指定topic下写入消息数
      *
      * @param topic topic
      * @return

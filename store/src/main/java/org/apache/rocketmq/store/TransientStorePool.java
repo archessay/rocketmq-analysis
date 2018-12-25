@@ -31,13 +31,24 @@ import sun.nio.ch.DirectBuffer;
 public class TransientStorePool {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
-    // 存储池的大小，默认5
+    /**
+     * 堆外内存池的大小，默认5
+     */
     private final int poolSize;
-    // 一个mappedFile文件大小，也即一个commitLog文件大小，默认1G
+
+    /**
+     * 一个映射文件的大小，默认1G
+     */
     private final int fileSize;
-    // 双端队列
+
+    /**
+     * 双端队列，保存堆外内存池中的buffer
+     */
     private final Deque<ByteBuffer> availableBuffers;
-    // 存储配置
+
+    /**
+     * 存储相关配置
+     */
     private final MessageStoreConfig storeConfig;
 
     public TransientStorePool(final MessageStoreConfig storeConfig) {
@@ -48,9 +59,7 @@ public class TransientStorePool {
     }
 
     /**
-     * It's a heavy init method.
-     *
-     * 初始化函数，分配poolSize个fileSize大小的堆外空间
+     * 初始化函数，分配{@link #poolSize}个{@link #fileSize}大小的堆外内存
      */
     public void init() {
         for (int i = 0; i < poolSize; i++) {
@@ -59,7 +68,7 @@ public class TransientStorePool {
 
             final long address = ((DirectBuffer) byteBuffer).address();
             Pointer pointer = new Pointer(address);
-            // 指定一个基地址，和一个偏移长度，将指定的这块内存（映射到物理内存）锁在物理内存中，不被交换到swap中。
+            // 指定一个基地址，和一个偏移长度，将指定的内存区间锁在物理内存中，不被交换到swap中。
             LibC.INSTANCE.mlock(pointer, new NativeLong(fileSize));
 
             availableBuffers.offer(byteBuffer);
@@ -67,7 +76,7 @@ public class TransientStorePool {
     }
 
     /**
-     * 将所有锁定的内存解锁
+     * 将所有锁定的堆外内存解锁
      */
     public void destroy() {
         for (ByteBuffer byteBuffer : availableBuffers) {
@@ -78,7 +87,7 @@ public class TransientStorePool {
     }
 
     /**
-     * 用完一个buffer之后归还，并对buffer进行重置
+     * 用完一个{@code buffer}之后归还，并对{@code buffer}进行重置
      *
      * @param byteBuffer
      */
@@ -89,7 +98,7 @@ public class TransientStorePool {
     }
 
     /**
-     * 获取一个buffer
+     * 获取一个{@code buffer}
      *
      * @return
      */
@@ -103,7 +112,7 @@ public class TransientStorePool {
     }
 
     /**
-     * 池中剩余可用的buffers数量
+     * 获取堆外内存池中剩余可用的{@code buffers}数量
      *
      * @return
      */

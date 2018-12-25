@@ -57,6 +57,8 @@ public class MessageExt extends Message {
     }
 
     public static TopicFilterType parseTopicFilterType(final int sysFlag) {
+        // MULTI_TAGS_FLAG = 0x1 << 1;
+        // 0010
         if ((sysFlag & MessageSysFlag.MULTI_TAGS_FLAG) == MessageSysFlag.MULTI_TAGS_FLAG) {
             return TopicFilterType.MULTI_TAG;
         }
@@ -65,9 +67,9 @@ public class MessageExt extends Message {
     }
 
     /**
-     * 从消息的SocketAddress获取host保存到buffer的前四个字节，port保存到后四个字节
+     * 从消息的{@link MessageExt#storeHost}中获取host保存到byteBuffer的前4个字节，port保存到后4个字节
      *
-     * @param socketAddress 消息的SocketAddress
+     * @param socketAddress 消息的{@link MessageExt#storeHost}
      * @param byteBuffer hostHolder buffer，用来保存host、port
      * @return
      */
@@ -103,7 +105,7 @@ public class MessageExt extends Message {
     }
 
     /**
-     * 从消息的storeHost中获取host保存到buffer的前四个字节，port保存到后四个字节
+     * 从消息的{@link MessageExt#storeHost}中获取host保存到byteBuffer的前4个字节，port保存到后4个字节
      *
      * @param byteBuffer hostHolder buffer，用来保存host、port
      * @return

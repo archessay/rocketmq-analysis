@@ -16,6 +16,7 @@
  */
 package org.apache.rocketmq.common;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.rocketmq.common.constant.LoggerName;
@@ -27,9 +28,21 @@ public abstract class ServiceThread implements Runnable {
 
     private static final long JOIN_TIME = 90 * 1000;
 
-    protected final Thread thread; // 当前的服务线程
+    /**
+     * 当前的服务线程
+     */
+    protected final Thread thread;
+    /**
+     * 等待通知，{@link CountDownLatch2}是RocketMQ基于AQS实现的{@link CountDownLatch}。
+     */
     protected final CountDownLatch2 waitPoint = new CountDownLatch2(1);
-    protected volatile AtomicBoolean hasNotified = new AtomicBoolean(false); // 标记是否已通知服务线程
+    /**
+     * 标记是否已通知当前阻塞线程
+     */
+    protected volatile AtomicBoolean hasNotified = new AtomicBoolean(false);
+    /**
+     * 标记服务是否停止
+     */
     protected volatile boolean stopped = false;
 
     public ServiceThread() {
@@ -107,14 +120,14 @@ public abstract class ServiceThread implements Runnable {
     }
 
     /**
-     * 如果收到通知，则执行onWaitEnd并返回；否则，超时等待。
+     * 如果收到通知，则执行{@link #onWaitEnd()}方法并返回；否则，超时等待。
      *
-     * 无论是等待超时、被中断还是被唤醒，都将"已通知状态"置为false，然后执行onWaitEnd并返回。
+     * 无论是等待超时、被中断还是被唤醒，都将通知状态标记为未通知，然后执行{@link #onWaitEnd()}方法并返回。
      *
      * @param interval 超时等待时间
      */
     protected void waitForRunning(long interval) {
-        // 收到通知，则执行onWaitEnd并返回
+        // 收到通知，则执行onWaitEnd方法并返回
         if (hasNotified.compareAndSet(true, false)) {
             this.onWaitEnd();
             return;
@@ -125,7 +138,7 @@ public abstract class ServiceThread implements Runnable {
         // entry to wait
         waitPoint.reset(); // 重置使其可复用
 
-        // 无论是等待超时、被中断还是被唤醒，都将"已通知状态"置为false，然后执行onWaitEnd并返回
+        // 无论是等待超时、被中断还是被唤醒，都将通知状态标记为未通知，然后执行onWaitEnd方法并返回。
         try {
             waitPoint.await(interval, TimeUnit.MILLISECONDS); // 超时等待
         } catch (InterruptedException e) {
