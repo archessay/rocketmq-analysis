@@ -441,7 +441,7 @@ public class MappedFile extends ReferenceResource {
     /**
      * 将writeBuffer的脏数据写到fileChannel。
      * <p>
-     * 如果MappedFile被shutdown，还会释放资源。
+     * 如果服务被关闭，还会释放资源。
      *
      * @param commitLeastPages 执行提交的最少内存页数
      * @return 当前已提交的位置（针对每一个MappedFile，offset从0开始）
@@ -449,12 +449,13 @@ public class MappedFile extends ReferenceResource {
     public int commit(final int commitLeastPages) {
         if (writeBuffer == null) {
             // no need to commit data to file channel, so just regard wrotePosition as committedPosition.
+            // 无需将数据提交到fileChannel，因此只需将writePosition视为committedPosition。
             return this.wrotePosition.get();
         }
         if (this.isAbleToCommit(commitLeastPages)) { // @1
-            if (this.hold()) {
-                commit0(commitLeastPages); // @2
-                this.release(); // @3
+            if (this.hold()) { // @2
+                commit0(commitLeastPages); // @3
+                this.release();
             } else {
                 log.warn("in commit, hold failed, commit offset = " + this.committedPosition.get());
             }
@@ -517,21 +518,21 @@ public class MappedFile extends ReferenceResource {
     /**
      * 校验是否有足够的可提交的数据。
      * <p>
-     * 只要该MappedFile已经被写满，即wrotePosition等于fileSize，如果已写满则可执行提交；
-     * 检查尚未提交的消息页数是否大于等于最小提交页数，页数不够暂时不提交；
+     * 只要该映射文件已经被写满，即wrotePosition等于fileSize，则可执行提交；
+     * 检查尚未提交的消息内存页数是否大于等于最小提交页数，页数不够暂时不提交；
      *
      * @param commitLeastPages 执行提交的最少内存页数
      * @return
      */
     protected boolean isAbleToCommit(final int commitLeastPages) {
-        int flush = this.committedPosition.get(); // 当前MappedFile提交的位置
+        int flush = this.committedPosition.get(); // 获取当前已提交的位置
         int write = this.wrotePosition.get(); // 获取当前具有可提交数据的最大位置
 
-        if (this.isFull()) { // 只要该MappedFile已经被写满，即wrotePosition等于fileSize，如果已写满则可执行提交；
+        if (this.isFull()) { // 只要该映射文件已经被写满，即wrotePosition等于fileSize，则可执行提交；
             return true;
         }
 
-        if (commitLeastPages > 0) { // 检查尚未提交的消息页数是否大于等于最小提交页数，页数不够暂时不提交；
+        if (commitLeastPages > 0) { // 检查尚未提交的消息内存页数是否大于等于最小提交页数，页数不够暂时不提交；
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= commitLeastPages;
         }
 
@@ -599,15 +600,21 @@ public class MappedFile extends ReferenceResource {
         return null;
     }
 
+    /**
+     * 回收堆外内存
+     *
+     * @param currentRef
+     * @return
+     */
     @Override
     public boolean cleanup(final long currentRef) {
-        if (this.isAvailable()) { // 未shutdown，停止unmapping，返回false
+        if (this.isAvailable()) { // 当前资源可用，停止回收堆外内存，返回false
             log.error("this file[REF:" + currentRef + "] " + this.fileName
                     + " have not shutdown, stop unmapping.");
             return false;
         }
 
-        if (this.isCleanupOver()) { // 已清理，直接返回true
+        if (this.isCleanupOver()) { // 已回收堆外内存，直接返回true
             log.error("this file[REF:" + currentRef + "] " + this.fileName
                     + " have cleanup, do not do it again.");
             return true;

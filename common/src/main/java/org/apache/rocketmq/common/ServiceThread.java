@@ -111,7 +111,7 @@ public abstract class ServiceThread implements Runnable {
     }
 
     /**
-     * 如果当前没有其它的请求通知服务线程，则会通知
+     * 如果该阻塞的服务线程没有收到其它通知（没有被唤醒），则将该阻塞的服务线程的通知状态标记为已通知状态，并通知该阻塞的服务线程，将其唤醒。
      */
     public void wakeup() {
         if (hasNotified.compareAndSet(false, true)) {
@@ -120,7 +120,7 @@ public abstract class ServiceThread implements Runnable {
     }
 
     /**
-     * 如果收到通知，则执行{@link #onWaitEnd()}方法并返回；否则，超时等待。
+     * 如果当前线程收到通知（被唤醒），则执行{@link #onWaitEnd()}方法并返回；否则，超时等待。
      *
      * 无论是等待超时、被中断还是被唤醒，都将通知状态标记为未通知，然后执行{@link #onWaitEnd()}方法并返回。
      *

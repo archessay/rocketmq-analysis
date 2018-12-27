@@ -560,7 +560,7 @@ public class MappedFileQueue {
     }
 
     /**
-     * 根据当前提交位置查找MappedFile，然后对其执行提交操作。
+     * 根据当前已提交位置查找映射文件，然后对其执行提交操作。
      * <p>
      * 所谓提交就是将writeBuffer的脏数据写到fileChannel。
      *
@@ -569,10 +569,11 @@ public class MappedFileQueue {
      */
     public boolean commit(final int commitLeastPages) {
         boolean result = true;
-        // 根据当前提交位置查找MappedFile；如果找不到，且提交位置为0，则返回第一个MappedFile
+        // 根据当前提交位置查找映射文件；如果找不到，且提交位置为0，则返回第一个映射文件
+        // 因为committedWhere的初始值为0，当第一个映射文件的起始偏移量不为0（当然，默认为0）时，此时根据committedWhere是查找不到映射文件的，所以就需要返回第一个映射文件
         MappedFile mappedFile = this.findMappedFileByOffset(this.committedWhere, this.committedWhere == 0);
         if (mappedFile != null) {
-            int offset = mappedFile.commit(commitLeastPages); // 执行真正的提交，并返回当前已提交的位置（针对每一个MappedFile，offset从0开始）
+            int offset = mappedFile.commit(commitLeastPages); // 执行真正的提交，并返回当前已提交的位置（针对每一个映射文件，offset从0开始）
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.committedWhere; // 判断是否有新的数据提交
             this.committedWhere = where;// 保存当前已提交的位置（全局）
@@ -582,20 +583,20 @@ public class MappedFileQueue {
     }
 
     /**
-     * 根据物理偏移量查找MappedFile。
+     * 根据物理偏移量查找映射文件。
      * <p>
-     * 如果returnFirstOnNotFound为true，那么如果MappedFile没有找到，则返回第一个。
+     * 如果returnFirstOnNotFound为true，那么如果映射文件没有找到，则返回第一个。
      *
      * @param offset                物理偏移量
-     * @param returnFirstOnNotFound 如果MappedFile没有找到，是否返回第一个
-     * @return MappedFile或者null (当没有找到MappedFile，并且returnFirstOnNotFound为false).
+     * @param returnFirstOnNotFound 如果映射文件没有找到，是否返回第一个
+     * @return MappedFile或者null(没有找到映射文件，并且returnFirstOnNotFound为false).
      */
     public MappedFile findMappedFileByOffset(final long offset, final boolean returnFirstOnNotFound) {
         try {
-            MappedFile firstMappedFile = this.getFirstMappedFile(); // 获取第一个MappedFile
-            MappedFile lastMappedFile = this.getLastMappedFile(); // 获取最后一个MappedFile
+            MappedFile firstMappedFile = this.getFirstMappedFile(); // 获取第一个映射文件
+            MappedFile lastMappedFile = this.getLastMappedFile(); // 获取最后一个映射文件
             if (firstMappedFile != null && lastMappedFile != null) {
-                // 如果offset小于第一个MappedFile的起始偏移量，或者offset大于等于最后一个MappedFile的起始偏移量加上MappedFile的大小，那么offset不匹配，这是不对的
+                // 如果offset小于第一个映射文件的起始偏移量，或者offset大于等于最后一个映射文件的起始偏移量加上映射文件的大小，那么offset不匹配，这是不对的
                 if (offset < firstMappedFile.getFileFromOffset() || offset >= lastMappedFile.getFileFromOffset() + this.mappedFileSize) {
                     LOG_ERROR.warn("Offset not matched. Request offset: {}, firstOffset: {}, lastOffset: {}, mappedFileSize: {}, mappedFiles count: {}",
                             offset,
@@ -604,7 +605,7 @@ public class MappedFileQueue {
                             this.mappedFileSize,
                             this.mappedFiles.size());
                 } else {
-                    // 这里的减法主要是考虑到第一个MappedFile的起始偏移量可能不是从0开始（MappedFileQueue在创建MappedFile时是支持指定第一个MappedFile的起始偏移量的，默认为0）
+                    // 这里的减法主要是考虑到第一个映射文件的起始偏移量可能不是从0开始（MappedFileQueue在创建映射文件时是支持指定第一个映射文件的起始偏移量的，默认为0）
                     int index = (int) ((offset / this.mappedFileSize) - (firstMappedFile.getFileFromOffset() / this.mappedFileSize));
                     MappedFile targetFile = null;
                     try {
@@ -625,7 +626,7 @@ public class MappedFileQueue {
                     }
                 }
 
-                // 如果找不到，返回第一个MappedFile
+                // 如果找不到，返回第一个映射文件
                 if (returnFirstOnNotFound) {
                     return firstMappedFile;
                 }

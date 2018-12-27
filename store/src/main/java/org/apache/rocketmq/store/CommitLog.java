@@ -1047,7 +1047,7 @@ public class CommitLog {
         public void run() {
             CommitLog.log.info(this.getServiceName() + " service started");
             while (!this.isStopped()) {
-                // 提交数据到FileChannel的超时等待时间，默认200毫秒
+                // 提交数据到fileChannel的超时等待时间，默认200毫秒
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitIntervalCommitLog();
                 // 提交数据到fileChannel时所提交的最少内存页数，默认4
                 int commitDataLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitCommitLogLeastPages();
@@ -1068,6 +1068,7 @@ public class CommitLog {
                     if (!result) { // result为false，意味着有新的数据提交，则需要刷盘
                         this.lastCommitTimestamp = end; // result = false means some data committed.
                         // now wake up flush thread.
+                        // 唤醒刷盘线程
                         flushCommitLogService.wakeup(); // @2
                     }
 
@@ -1697,14 +1698,20 @@ public class CommitLog {
     }
 
     public static class MessageExtBatchEncoder {
-        // Store the message content
-        // 保存批量消息内容
+        /**
+         * 保存批量消息内容的buffer
+         */
         private final ByteBuffer msgBatchMemory;
-        // The maximum length of the message
-        // 消息长度的最大阈值，默认4M
-        // 在批量插入时，还会用于限制批量消息的总大小
+        /**
+         * 消息长度的最大阈值，默认4M。
+         *
+         * 同时还会用于限制批量消息的总大小
+         */
         private final int maxMessageSize;
 
+        /**
+         * 保存地址的buffer
+         */
         private final ByteBuffer hostHolder = ByteBuffer.allocate(8);
 
         MessageExtBatchEncoder(final int size) {
@@ -1713,8 +1720,11 @@ public class CommitLog {
         }
 
         public ByteBuffer encode(final MessageExtBatch messageExtBatch) {
+            // 重置msgBatchMemory
             msgBatchMemory.clear(); // not thread-safe // @1
+            // 保存当前遍历的所有消息的总长度
             int totalMsgLen = 0;
+            // 将消息的消息体二进制字节数组包装为ByteBuffer
             ByteBuffer messagesByteBuff = messageExtBatch.wrap(); // @2
             while (messagesByteBuff.hasRemaining()) {
                 // @3^
@@ -1727,7 +1737,7 @@ public class CommitLog {
                 // 4 FLAG
                 int flag = messagesByteBuff.getInt();
                 // 5 BODY
-                // 获取消息体，并执行循环冗余校验
+                // 获取消息体，并获取循环冗余校验码
                 int bodyLen = messagesByteBuff.getInt();
                 int bodyPos = messagesByteBuff.position();
                 int bodyCrc = UtilAll.crc32(messagesByteBuff.array(), bodyPos, bodyLen);
@@ -1743,7 +1753,6 @@ public class CommitLog {
 
                 final int msgLen = calMsgLength(bodyLen, topicLength, propertiesLen);
 
-                // Exceeds the maximum message
                 // 消息长度超过了最大阈值
                 if (msgLen > this.maxMessageSize) {
                     CommitLog.log.warn("message size exceeded, msg total size: " + msgLen + ", msg body size: " + bodyLen
@@ -1752,7 +1761,7 @@ public class CommitLog {
                 }
 
                 totalMsgLen += msgLen;
-                // Determines whether there is sufficient free space
+
                 // 批量消息总长度超过了最大阈值
                 if (totalMsgLen > maxMessageSize) {
                     throw new RuntimeException("message size exceeded");
