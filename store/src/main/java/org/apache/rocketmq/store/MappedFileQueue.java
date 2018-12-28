@@ -70,7 +70,7 @@ public class MappedFileQueue {
     private long committedWhere = 0;
 
     /**
-     * 当前已刷盘的最后一条消息存储的时间戳
+     * 采用完全刷盘方式（flushLeastPages为0）时，所刷盘的最后一条消息存储的时间戳
      */
     private volatile long storeTimestamp = 0;
 
@@ -541,10 +541,11 @@ public class MappedFileQueue {
      */
     public boolean flush(final int flushLeastPages) {
         boolean result = true;
-        // 根据当前刷盘位置查找MappedFile；如果找不到，且刷盘位置为0，则返回第一个MappedFile
+        // 根据当前已刷盘物理位置查找映射文件。如果找不到，且当前已刷盘物理位置为0，则返回第一个映射文件。
+        // 因为flushedWhere的初始值为0，当第一个映射文件的起始偏移量不为0（当然，默认为0）时，此时根据flushedWhere是查找不到映射文件的，所以就需要返回第一个映射文件。
         MappedFile mappedFile = this.findMappedFileByOffset(this.flushedWhere, this.flushedWhere == 0);
         if (mappedFile != null) {
-            long tmpTimeStamp = mappedFile.getStoreTimestamp(); // 最后一次存储消息的时间戳
+            long tmpTimeStamp = mappedFile.getStoreTimestamp(); // 最后一次写入消息（写入buffer）的时间戳
             int offset = mappedFile.flush(flushLeastPages); // 执行真正的刷盘，并返回当前已刷盘的位置（针对每一个MappedFile，offset从0开始）
 
             long where = mappedFile.getFileFromOffset() + offset;
@@ -569,7 +570,7 @@ public class MappedFileQueue {
      */
     public boolean commit(final int commitLeastPages) {
         boolean result = true;
-        // 根据当前提交位置查找映射文件；如果找不到，且提交位置为0，则返回第一个映射文件
+        // 根据当前已提交物理位置查找映射文件。如果找不到，且当前已提交物理位置为0，则返回第一个映射文件
         // 因为committedWhere的初始值为0，当第一个映射文件的起始偏移量不为0（当然，默认为0）时，此时根据committedWhere是查找不到映射文件的，所以就需要返回第一个映射文件
         MappedFile mappedFile = this.findMappedFileByOffset(this.committedWhere, this.committedWhere == 0);
         if (mappedFile != null) {

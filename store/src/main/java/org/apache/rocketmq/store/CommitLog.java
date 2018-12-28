@@ -1034,6 +1034,9 @@ public class CommitLog {
         protected static final int RETRY_TIMES_OVER = 10;
     }
 
+    /**
+     * 异步提交服务线程
+     */
     class CommitRealTimeService extends FlushCommitLogService {
 
         private long lastCommitTimestamp = 0;
@@ -1092,8 +1095,13 @@ public class CommitLog {
         }
     }
 
+    /**
+     * 异步刷盘服务线程
+     *
+     * 有实时刷盘和定时刷盘两种策略，默认为实时刷盘
+     */
     class FlushRealTimeService extends FlushCommitLogService {
-        private long lastFlushTimestamp = 0;
+        private long lastFlushTimestamp = 0; // 最后一次刷盘的时间
         private long printTimes = 0;
 
         public void run() {
@@ -1103,8 +1111,11 @@ public class CommitLog {
                 // 是否是定时刷盘。默认是实时刷盘
                 boolean flushCommitLogTimed = CommitLog.this.defaultMessageStore.getMessageStoreConfig().isFlushCommitLogTimed();
 
-                // 刷盘的超时等待时间，默认500毫秒
+                // 1. 实时刷盘的超时等待时间;
+                // 2. 定时刷盘的间隔时间；
+                // 默认500毫秒
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushIntervalCommitLog();
+
                 // 刷盘的最少内存页数，默认4
                 int flushPhysicQueueLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogLeastPages();
 
@@ -1114,12 +1125,14 @@ public class CommitLog {
                 boolean printFlushProgress = false;
 
                 // Print flush progress
+                // @1^
                 long currentTimeMillis = System.currentTimeMillis();
                 if (currentTimeMillis >= (this.lastFlushTimestamp + flushPhysicQueueThoroughInterval)) {
                     this.lastFlushTimestamp = currentTimeMillis;
                     flushPhysicQueueLeastPages = 0;
                     printFlushProgress = (printTimes++ % 10) == 0;
                 }
+                // @1$
 
                 try {
                     if (flushCommitLogTimed) { // 定时刷盘
@@ -1135,7 +1148,8 @@ public class CommitLog {
                     long begin = System.currentTimeMillis();
                     CommitLog.this.mappedFileQueue.flush(flushPhysicQueueLeastPages);
 
-                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp(); // 当前已刷盘的最后一条消息存储的时间戳
+                    // 采用完全刷盘方式（flushLeastPages为0）时，所刷盘的最后一条消息存储的时间戳
+                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();
                     if (storeTimestamp > 0) {
                         CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);
                     }
@@ -1151,7 +1165,7 @@ public class CommitLog {
             }
 
             // Normal shutdown, to ensure that all the flush before exit
-            // 正常shutdown，确保退出前全部刷盘
+            // 正常关闭服务，确保退出前全部刷盘
             boolean result = false;
             for (int i = 0; i < RETRY_TIMES_OVER && !result; i++) {
                 result = CommitLog.this.mappedFileQueue.flush(0);
@@ -1258,7 +1272,8 @@ public class CommitLog {
                         req.wakeupCustomer(flushOK); // @@3
                     }
 
-                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp(); // 当前已刷盘的最后一条消息存储的时间戳
+                    // 采用完全刷盘方式（flushLeastPages为0）时，所刷盘的最后一条消息存储的时间戳
+                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();
                     if (storeTimestamp > 0) {
                         CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);
                     }

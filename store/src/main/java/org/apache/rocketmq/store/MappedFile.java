@@ -63,14 +63,14 @@ public class MappedFile extends ReferenceResource {
 
     /**
      * 当前写入的位置，当值等于{@link #fileSize}时代表文件写满了。
-     *
+     * <p>
      * 注意，这里记录的不是真正刷入磁盘的位置，而是写入到{@code buffer}的位置
      */
     protected final AtomicInteger wrotePosition = new AtomicInteger(0);
 
     /**
      * 当前提交的位置
-     *
+     * <p>
      * 所谓提交就是将{@link #writeBuffer}的脏数据写到{@link #fileChannel}
      */
     protected final AtomicInteger committedPosition = new AtomicInteger(0);
@@ -87,7 +87,7 @@ public class MappedFile extends ReferenceResource {
 
     /**
      * 文件通道，以支持文件的随机读写。
-     *
+     * <p>
      * 通过{@link #fileChannel}将此通道的文件区域直接映射到内存中，对应的内存映射为{@link #mappedByteBuffer}，可以直接通过{@link #mappedByteBuffer}读写CommitLog文件。
      */
     protected FileChannel fileChannel;
@@ -97,7 +97,7 @@ public class MappedFile extends ReferenceResource {
 
     /**
      * 从{@link #transientStorePool}中获取，消息先写入该{@code buffer}，然后再写入到{@link #fileChannel}。可能为null。
-     *
+     * <p>
      * 只有仅当{@link org.apache.rocketmq.store.config.MessageStoreConfig#transientStorePoolEnable}为true，刷盘策略为异步刷盘（ASYNC_FLUSH），并且broker为主节点时才启用。
      */
     protected ByteBuffer writeBuffer = null;
@@ -114,7 +114,7 @@ public class MappedFile extends ReferenceResource {
 
     /**
      * CommitLog文件起始偏移量。
-     *
+     * <p>
      * 其实就是文件名称，一般为20位数字，代表这个文件开始时的offset
      */
     private long fileFromOffset;
@@ -130,7 +130,7 @@ public class MappedFile extends ReferenceResource {
     private MappedByteBuffer mappedByteBuffer;
 
     /**
-     * 最后一次写入消息的时间戳
+     * 最后一次写入消息（写入buffer）的时间戳
      */
     private volatile long storeTimestamp = 0;
 
@@ -398,24 +398,23 @@ public class MappedFile extends ReferenceResource {
     /**
      * 消息刷盘。
      * <p>
-     * 如果MappedFile被shutdown，还会释放堆外内存。
+     * 如果资源（MappedFile）被关闭，还会回收{@link #mappedByteBuffer}堆外内存。
      *
      * @param flushLeastPages 执行刷盘的最少内存页数
      * @return 当前已刷盘的位置（针对每一个MappedFile，offset从0开始）
      */
     public int flush(final int flushLeastPages) {
-        // @1
-        if (this.isAbleToFlush(flushLeastPages)) { // 校验是否有可刷盘的数据
+        if (this.isAbleToFlush(flushLeastPages)) { // 校验是否有可刷盘的数据 @1
             if (this.hold()) {
-                // @2
-                int value = getReadPosition(); // 当前具有可刷盘数据的最大偏移量
+
+                int value = getReadPosition(); // 当前具有可刷盘数据的最大偏移量 @2
 
                 try {
                     // We only append data to fileChannel or mappedByteBuffer, never both.
-                    // 我们只将数据附加到fileChannel或mappedByteBuffer，而不是两者。
+                    // 我们将消息要么写入fileChannel，要么写入mappedByteBuffer，而不是同时写入两者
 
-                    // 只有仅当transientStorePoolEnable为true，FlushDiskType为异步刷盘（ASYNC_FLUSH），并且为*_Master时，才启用writeBuffer。
-                    // 从transientStorePool中获取writeBuffer，消息先写入该buffer，然后再写入到fileChannel
+                    // 只有仅当transientStorePoolEnable为true，刷盘策略为异步刷盘（ASYNC_FLUSH），并且broker为主节点时，才启用transientStorePool。
+                    // 然后从transientStorePool中获取writeBuffer，消息先写入该buffer，然后再写入到fileChannel
                     if (writeBuffer != null || this.fileChannel.position() != 0) {
                         this.fileChannel.force(false);
                     } else {
@@ -427,10 +426,10 @@ public class MappedFile extends ReferenceResource {
 
                 this.flushedPosition.set(value); // 设置当前刷盘的位置
 
-                // 每次刷盘后，都检查MappedFile是否被shutdown，如果是则会释放堆外内存（mappedByteBuffer）
-                this.release(); // @3
+                // 每次刷盘后，如果资源（MappedFile）被关闭，还会回收mappedByteBuffer堆外内存。
+                this.release();
             } else {
-                // @4
+                // @3
                 log.warn("in flush, hold failed, flush offset = " + this.flushedPosition.get());
                 this.flushedPosition.set(getReadPosition()); // 设置当前刷盘的位置
             }
@@ -441,7 +440,7 @@ public class MappedFile extends ReferenceResource {
     /**
      * 将writeBuffer的脏数据写到fileChannel。
      * <p>
-     * 如果服务被关闭，还会释放资源。
+     * 如果资源（MappedFile）被关闭，还会{@link #mappedByteBuffer}堆外内存。
      *
      * @param commitLeastPages 执行提交的最少内存页数
      * @return 当前已提交的位置（针对每一个MappedFile，offset从0开始）
@@ -472,18 +471,18 @@ public class MappedFile extends ReferenceResource {
     }
 
     protected void commit0(final int commitLeastPages) {
-        int writePos = this.wrotePosition.get();
-        int lastCommittedPosition = this.committedPosition.get();
+        int writePos = this.wrotePosition.get(); // 当前写入的位置
+        int lastCommittedPosition = this.committedPosition.get(); // 当前提交的位置
 
         if (writePos - this.committedPosition.get() > 0) { // 有待提交的数据
             try {
-                // 设置提交的范围：position ～ limit
+                // 设置提交的范围：lastCommittedPosition ～ writePos
                 ByteBuffer byteBuffer = writeBuffer.slice();
                 byteBuffer.position(lastCommittedPosition);
                 byteBuffer.limit(writePos);
 
                 this.fileChannel.position(lastCommittedPosition); // 设置写入的起始偏移量
-                this.fileChannel.write(byteBuffer); // 将writeBuffer偏移量在position ～ limit之间的字节写入fileChannel
+                this.fileChannel.write(byteBuffer); // 将writeBuffer偏移量在lastCommittedPosition ～ writePos之间的字节写入fileChannel
                 this.committedPosition.set(writePos); // 更新提交的位置
             } catch (Throwable e) {
                 log.error("Error occurred when commit data to FileChannel.", e);
@@ -492,23 +491,23 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * 校验是否有足够的可刷盘的数据。
+     * 检查是否有足够的可刷盘的数据。
      * <p>
-     * 只要该MappedFile已经被写满，即wrotePosition等于fileSize，如果已写满则可执行刷盘；
-     * 检查尚未刷盘的消息页数是否大于等于最小刷盘页数，页数不够暂时不刷盘；
+     * 只要该映射文件已经被写满，即wrotePosition等于fileSize，则可执行刷盘；
+     * 检查尚未刷盘的消息内存页数是否大于等于最小刷盘页数，页数不够暂时不刷盘；
      *
      * @param flushLeastPages 执行刷盘的最少内存页数
      * @return
      */
     private boolean isAbleToFlush(final int flushLeastPages) {
-        int flush = this.flushedPosition.get(); // 当前MappedFile刷盘的位置
+        int flush = this.flushedPosition.get(); // 获取当前已刷盘的位置
         int write = getReadPosition(); // 获取当前具有可刷盘数据的最大偏移量
 
-        if (this.isFull()) { // 只要该MappedFile已经被写满，即wrotePosition等于fileSize，如果已写满则可执行刷盘；
+        if (this.isFull()) { // 只要该映射文件已经被写满，即wrotePosition等于fileSize，则可执行刷盘；
             return true;
         }
 
-        if (flushLeastPages > 0) { // 检查尚未刷盘的消息页数是否大于等于最小刷盘页数，页数不够暂时不刷盘；
+        if (flushLeastPages > 0) { // 检查尚未刷盘的消息内存页数是否大于等于最小刷盘页数，页数不够暂时不刷盘；
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= flushLeastPages;
         }
 
