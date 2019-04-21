@@ -1165,9 +1165,19 @@ public class DefaultMessageStore implements MessageStore {
         return null;
     }
 
+    /**
+     * 根据消息的topic和queueId获取对应的consumeQueue。
+     * <p>
+     * 如果不存在，会初始化一个。
+     *
+     * @param topic   消息的topic
+     * @param queueId 消息的queueId
+     * @return
+     */
     public ConsumeQueue findConsumeQueue(String topic, int queueId) {
+        // 根据topic获取该topic下所有的consumeQueue
         ConcurrentMap<Integer, ConsumeQueue> map = consumeQueueTable.get(topic);
-        if (null == map) {
+        if (null == map) { // 如果不存在，则初始化一个
             ConcurrentMap<Integer, ConsumeQueue> newMap = new ConcurrentHashMap<Integer, ConsumeQueue>(128);
             ConcurrentMap<Integer, ConsumeQueue> oldMap = consumeQueueTable.putIfAbsent(topic, newMap);
             if (oldMap != null) {
@@ -1177,14 +1187,16 @@ public class DefaultMessageStore implements MessageStore {
             }
         }
 
+        // 根据queueId获取指定queueId所对应的consumeQueue
         ConsumeQueue logic = map.get(queueId);
-        if (null == logic) {
+        if (null == logic) { // 如果不存在，则初始化一个
             ConsumeQueue newLogic = new ConsumeQueue(
-                    topic,
-                    queueId,
-                    StorePathConfigHelper.getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()),
-                    this.getMessageStoreConfig().getMapedFileSizeConsumeQueue(),
-                    this);
+                    topic, // 消息的topic
+                    queueId, // 消息的queueId
+                    StorePathConfigHelper.getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()), // 所有ConsumeQueue文件的存储根目录  @1
+                    this.getMessageStoreConfig().getMapedFileSizeConsumeQueue(), // 每个ConsumeQueue文件的大小 @2
+                    this // DefaultMessageStore
+            ); // @3
             ConsumeQueue oldLogic = map.putIfAbsent(queueId, newLogic);
             if (oldLogic != null) {
                 logic = oldLogic;
@@ -1456,6 +1468,7 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     public void putMessagePositionInfo(DispatchRequest dispatchRequest) {
+        // 根据消息的topic和queueId获取对应的consumeQueue。如果不存在，会初始化一个。
         ConsumeQueue cq = this.findConsumeQueue(dispatchRequest.getTopic(), dispatchRequest.getQueueId());
         cq.putMessagePositionInfoWrapper(dispatchRequest);
     }
@@ -1502,6 +1515,7 @@ public class DefaultMessageStore implements MessageStore {
         public void dispatch(DispatchRequest request) {
             final int tranType = MessageSysFlag.getTransactionValue(request.getSysFlag());
             switch (tranType) {
+                // 只处理非事务消息和Commit消息，不处理Prepare、Rollback消息
                 case MessageSysFlag.TRANSACTION_NOT_TYPE:
                 case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
                     DefaultMessageStore.this.putMessagePositionInfo(request);

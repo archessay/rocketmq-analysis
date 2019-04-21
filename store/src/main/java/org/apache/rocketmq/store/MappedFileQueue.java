@@ -77,8 +77,8 @@ public class MappedFileQueue {
     /**
      * 构造函数
      *
-     * @param storePath                 CommitLog文件的存储路径
-     * @param mappedFileSize            CommitLog文件大小，默认1G
+     * @param storePath                 文件的存储路径
+     * @param mappedFileSize            文件大小，默认1G
      * @param allocateMappedFileService MappedFile分配线程，RocketMQ使用内存映射处理commitLog，consumeQueue文件
      */
     public MappedFileQueue(final String storePath, int mappedFileSize,

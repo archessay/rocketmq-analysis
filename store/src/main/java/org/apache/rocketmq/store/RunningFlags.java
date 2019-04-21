@@ -77,7 +77,16 @@ public class RunningFlags {
         return false;
     }
 
-    //for consume queue, just ignore the DISK_FULL_BIT
+    // for consume queue, just ignore the DISK_FULL_BIT
+    /**
+     * 判断consumeQueue是否可写入
+     *
+     * 对于消费队列，只需忽略{@link #DISK_FULL_BIT}
+     *
+     * 与{@link #isWriteable} 不同的是，忽略了{@link #DISK_FULL_BIT}
+     *
+     * @return
+     */
     public boolean isCQWriteable() {
         if ((this.flagBits & (NOT_WRITEABLE_BIT | WRITE_LOGICS_QUEUE_ERROR_BIT | WRITE_INDEX_FILE_ERROR_BIT)) == 0) {
             return true;

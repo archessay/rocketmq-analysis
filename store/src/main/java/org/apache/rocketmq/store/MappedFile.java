@@ -356,7 +356,7 @@ public class MappedFile extends ReferenceResource {
     }
 
     public boolean appendMessage(final byte[] data) {
-        int currentPos = this.wrotePosition.get();
+        int currentPos = this.wrotePosition.get(); // 获取当前写入的位置
 
         if ((currentPos + data.length) <= this.fileSize) {
             try {

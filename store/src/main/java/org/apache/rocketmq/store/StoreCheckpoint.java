@@ -33,7 +33,7 @@ public class StoreCheckpoint {
     private final FileChannel fileChannel;
     private final MappedByteBuffer mappedByteBuffer;
     private volatile long physicMsgTimestamp = 0; // 当前已刷盘的最后一条消息存储的时间戳
-    private volatile long logicsMsgTimestamp = 0;
+    private volatile long logicsMsgTimestamp = 0; //
     private volatile long indexMsgTimestamp = 0;
 
     public StoreCheckpoint(final String scpPath) throws IOException {

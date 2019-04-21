@@ -79,7 +79,7 @@ public abstract class ReferenceResource {
      * 第一次调用该方法，会等待所有的资源占用都释放后，最后执行回收堆外内存；
      * 而第二次及以后调用，则会立刻执行回收堆外内存；
      *
-     * @param intervalForcibly 强制间隔，即两次生效的间隔至少要有这么大(不是至多!)
+     * @param intervalForcibly 强制间隔，即与第一次调用的间隔至少要有这么大(不是至多!)
      */
     public void shutdown(final long intervalForcibly) {
         if (this.available) {

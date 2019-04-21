@@ -21,10 +21,22 @@ import java.util.Map;
 public class DispatchRequest {
     private final String topic;
     private final int queueId;
+
+    /**
+     * 消息写入CommitLog的物理偏移量
+     */
     private final long commitLogOffset;
     private final int msgSize;
     private final long tagsCode;
+
+    /**
+     * 消息写入CommitLog的时间戳
+     */
     private final long storeTimestamp;
+
+    /**
+     * 这是个自增值，不是真正的 consumeQueue 的偏移量（真正的 consumeQueue 的偏移量为 queueOffset * CQ_STORE_UNIT_SIZE），可以代表这个 consumeQueue 或者 tranStateTable 队列中消息的个数。
+     */
     private final long consumeQueueOffset;
     private final String keys;
     private final boolean success;
@@ -35,6 +47,21 @@ public class DispatchRequest {
     private final Map<String, String> propertiesMap;
     private byte[] bitMap;
 
+    /**
+     *
+     * @param topic
+     * @param queueId
+     * @param commitLogOffset 消息写入CommitLog的物理偏移量
+     * @param msgSize
+     * @param tagsCode
+     * @param storeTimestamp
+     * @param consumeQueueOffset
+     * @param keys
+     * @param uniqKey
+     * @param sysFlag
+     * @param preparedTransactionOffset
+     * @param propertiesMap
+     */
     public DispatchRequest(
         final String topic,
         final int queueId,

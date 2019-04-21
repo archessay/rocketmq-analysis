@@ -33,10 +33,16 @@ public class MessageStoreConfig {
     // CommitLog file size,default is 1G
     private int mapedFileSizeCommitLog = 1024 * 1024 * 1024;
     // ConsumeQueue file size,default is 30W
+    /**
+     * ConsumeQueue文件大小，默认30W记录数大小，其中一条记录固定大小为20字节
+     */
     private int mapedFileSizeConsumeQueue = 300000 * ConsumeQueue.CQ_STORE_UNIT_SIZE;
     // enable consume queue ext
     private boolean enableConsumeQueueExt = false;
     // ConsumeQueue extend file size, 48M
+    /**
+     * ConsumeQueue扩展文件大小，默认48M
+     */
     private int mappedFileSizeConsumeQueueExt = 48 * 1024 * 1024;
     // Bit count of filter bit map.
     // this will be set by pipe of calculate filter bit map.
@@ -197,6 +203,11 @@ public class MessageStoreConfig {
         this.mapedFileSizeCommitLog = mapedFileSizeCommitLog;
     }
 
+    /**
+     * 获取ConsumeQueue文件大小，会进行向上取整运算
+     *
+     * @return
+     */
     public int getMapedFileSizeConsumeQueue() {
 
         int factor = (int) Math.ceil(this.mapedFileSizeConsumeQueue / (ConsumeQueue.CQ_STORE_UNIT_SIZE * 1.0));

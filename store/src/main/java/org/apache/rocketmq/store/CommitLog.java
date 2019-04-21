@@ -91,7 +91,6 @@ public class CommitLog {
      */
     private final ThreadLocal<MessageExtBatchEncoder> batchEncoderThreadLocal;
 
-    // consumeQueue topic-queueid offset table，topic-queueid 格式为key，值为offset
     /**
      * ConsumeQueue topic-queueid offset table，"topic-queueid"格式为key，offset为value
      */
@@ -339,9 +338,9 @@ public class CommitLog {
 
             int flag = byteBuffer.getInt();
 
-            long queueOffset = byteBuffer.getLong();
+            long queueOffset = byteBuffer.getLong(); // 这是个自增值，不是真正的 consumeQueue 的偏移量（真正的 consumeQueue 的偏移量为 queueOffset * CQ_STORE_UNIT_SIZE），可以代表这个 consumeQueue 或者 tranStateTable 队列中消息的个数。
 
-            long physicOffset = byteBuffer.getLong();
+            long physicOffset = byteBuffer.getLong(); // 消息写入CommitLog的物理偏移量
 
             int sysFlag = byteBuffer.getInt();
 
@@ -752,21 +751,21 @@ public class CommitLog {
             // 同步刷盘策略在初始化时，初始化的是GroupCommitService实例
             final GroupCommitService service = (GroupCommitService) this.flushCommitLogService;
 
-            if (messageExt.isWaitStoreMsgOK()) { // 1.「同步阻塞」等待消息刷盘成功。线程会阻塞，直至收到消息刷盘成功的通知；
+            if (messageExt.isWaitStoreMsgOK()) { // 1.「同步阻塞」等待消息刷盘完成。线程会阻塞，直至收到消息刷盘完成的通知；@1
 
                 // 创建同步阻塞刷盘请求
-                GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());
+                GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());  // @2
                 // 添加刷盘请求，并唤醒刷盘服务线程
-                service.putRequest(request);
+                service.putRequest(request); // @3
 
-                // 因为是同步阻塞刷盘，所以需要等待刷盘成功的通知
-                boolean flushOK = request.waitForFlush(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
+                // 因为是同步阻塞刷盘，所以需要等待完成刷盘的通知
+                boolean flushOK = request.waitForFlush(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout()); // @4
                 if (!flushOK) {
                     log.error("do groupcommit, wait for flush failed, topic: " + messageExt.getTopic() + " tags: " + messageExt.getTags()
                             + " client address: " + messageExt.getBornHostString());
                     putMessageResult.setPutMessageStatus(PutMessageStatus.FLUSH_DISK_TIMEOUT);
                 }
-            } else { // 2.「同步非阻塞」不等待消息刷盘成功。线程会继续执行；
+            } else { // 2.「同步非阻塞」不等待消息刷盘完成。线程会继续执行；
                 service.wakeup(); // 唤醒刷盘服务线程
             }
         }
@@ -1194,8 +1193,19 @@ public class CommitLog {
     }
 
     public static class GroupCommitRequest {
+        /**
+         * 可刷盘数据的最大位置
+         */
         private final long nextOffset;
+        /**
+         * 用于实现创建刷盘请求的线程的等待通知，初始值为 1。
+         *
+         * 这不同于刷盘服务线程的等待通知，刷盘服务线程的等待通知是由{@link ServiceThread}提供支持的
+         */
         private final CountDownLatch countDownLatch = new CountDownLatch(1);
+        /**
+         * 标记刷盘是否成功
+         */
         private volatile boolean flushOK = false;
 
         public GroupCommitRequest(long nextOffset) {
@@ -1206,15 +1216,28 @@ public class CommitLog {
             return nextOffset;
         }
 
+        /**
+         * 刷盘服务线程在完成刷盘后会调用该方法唤醒当前等待的线程
+         *
+         * @param flushOK 刷盘是否成功
+         */
         public void wakeupCustomer(final boolean flushOK) {
             this.flushOK = flushOK;
-            // 刷盘完成，唤醒当前刷盘请求所在线程
+            // 刷盘完成，唤醒当前等待的线程
             this.countDownLatch.countDown();
         }
 
+        /**
+         * 等待刷盘完成的通知。
+         *
+         * 注意，只有在成功刷盘时才会返回true，被中断或者等待超时都会返回false。
+         *
+         * @param timeout
+         * @return
+         */
         public boolean waitForFlush(long timeout) {
             try {
-                // 等待异步线程刷盘成功的通知
+                // 等待异步线程刷盘完成的通知
                 this.countDownLatch.await(timeout, TimeUnit.MILLISECONDS);
                 return this.flushOK;
             } catch (InterruptedException e) {
@@ -1225,10 +1248,16 @@ public class CommitLog {
     }
 
     /**
-     * GroupCommit Service
+     * 同步刷盘服务线程
      */
     class GroupCommitService extends FlushCommitLogService {
-        private volatile List<GroupCommitRequest> requestsWrite = new ArrayList<GroupCommitRequest>(); // 刷盘请求列表
+        /**
+         * 刷盘请求列表
+         */
+        private volatile List<GroupCommitRequest> requestsWrite = new ArrayList<GroupCommitRequest>();
+        /**
+         * 刷盘请求列表
+         */
         private volatile List<GroupCommitRequest> requestsRead = new ArrayList<GroupCommitRequest>();
 
         /**
@@ -1240,9 +1269,9 @@ public class CommitLog {
             synchronized (this.requestsWrite) {
                 this.requestsWrite.add(request); // 添加刷盘请求
             }
-            // 有新的刷盘请求，如果当前没有其它的刷盘请求通知刷盘服务线程，则会通知；
+            // 有新的刷盘请求，如果当前没有其它的刷盘请求通知刷盘服务线程，则通知该刷盘服务线程（将其唤醒）；
             if (hasNotified.compareAndSet(false, true)) {
-                waitPoint.countDown(); // 通知刷盘服务线程
+                waitPoint.countDown(); // 通知刷盘服务线程，将其唤醒
             }
         }
 
@@ -1258,11 +1287,10 @@ public class CommitLog {
                     for (GroupCommitRequest req : this.requestsRead) {
                         // There may be a message in the next file, so a maximum of
                         // two times the flush
-                        // 执行两次刷盘，可能因为当前待刷盘的commitLog空间不足，当前待刷盘的消息被写到了下一个MappedFile
+                        // 执行两次刷盘，可能因为当前待刷盘的CommitLog空间不足，当前待刷盘的消息被写到了下一个MappedFile
                         boolean flushOK = false;
                         for (int i = 0; i < 2 && !flushOK; i++) {
-                            // @@1
-                            flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() >= req.getNextOffset();
+                            flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() >= req.getNextOffset(); // @@1
 
                             if (!flushOK) {
                                 CommitLog.this.mappedFileQueue.flush(0); // @@2
@@ -1278,7 +1306,7 @@ public class CommitLog {
                         CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);
                     }
 
-                    this.requestsRead.clear(); // 清空正在刷盘的请求队列
+                    this.requestsRead.clear(); // 清空读请求队列
                 } else { // 同步非阻塞刷盘
                     // Because of individual messages is set to not sync flush, it
                     // will come to this process
@@ -1508,7 +1536,9 @@ public class CommitLog {
             // 5 FLAG
             this.msgStoreItemMemory.putInt(msgInner.getFlag()); //﻿标记位
             // 6 QUEUEOFFSET
-            this.msgStoreItemMemory.putLong(queueOffset); //﻿这是个自增值，不是真正的 consumeQueue 的偏移量，可以代表这个 consumeQueue 或者 tranStateTable 队列中消息的个数。
+            //﻿这是个自增值，不是真正的 consumeQueue 的偏移量（真正的 consumeQueue 的偏移量为 queueOffset * CQ_STORE_UNIT_SIZE），
+            // 可以代表这个 consumeQueue 或者 tranStateTable 队列中消息的个数。
+            this.msgStoreItemMemory.putLong(queueOffset);
             // 7 PHYSICALOFFSET
             this.msgStoreItemMemory.putLong(fileFromOffset + byteBuffer.position()); //﻿消息写入的物理偏移量（CommitLog文件（对应一个MappedFile）对应的起始偏移量 + 当前映射文件的写位置）
             // 8 SYSFLAG
@@ -1561,7 +1591,7 @@ public class CommitLog {
                        int wroteBytes               消息写入总字节数。注意，有可能会同时写入多条消息，所以这里是写入的总字节数,
                        String msgId                 消息ID，前4字节为broker存储地址的host，5～8字节为broker存储地址的port，最后8字节为wroteOffset,
                        long storeTimestamp          消息存储时间戳,
-                       long logicsOffset            逻辑偏移量，即消息保存到ConsumeQueue的offset,
+                       long logicsOffset            这是个自增值，不是真正的 consumeQueue 的偏移量（真正的 consumeQueue 的偏移量为 queueOffset * CQ_STORE_UNIT_SIZE），可以代表这个 consumeQueue 或者 tranStateTable 队列中消息的个数,
                        long pagecacheRT             消息写入PageCache花费的时间
              */
             AppendMessageResult result = new AppendMessageResult(AppendMessageStatus.PUT_OK, wroteOffset, msgLen, msgId,
