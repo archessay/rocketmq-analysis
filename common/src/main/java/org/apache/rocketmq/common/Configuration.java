@@ -32,6 +32,9 @@ public class Configuration {
 
     private final InternalLogger log;
 
+    /**
+     * 包括namesrvConfig, nettyServerConfig
+     */
     private List<Object> configObjectList = new ArrayList<Object>(4);
     private String storePath;
     private boolean storePathFromConfig = false;

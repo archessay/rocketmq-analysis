@@ -61,6 +61,7 @@ public abstract class InternalLoggerFactory {
     }
 
     static {
+        //初始化slf4j
         try {
             new Slf4jLoggerFactory();
         } catch (Throwable e) {

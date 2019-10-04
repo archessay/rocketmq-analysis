@@ -318,6 +318,11 @@ public class MixAll {
         return properties;
     }
 
+    /**
+     * 通过反射设置参数值
+     * @param p
+     * @param object
+     */
     public static void properties2Object(final Properties p, final Object object) {
         Method[] methods = object.getClass().getMethods();
         for (Method method : methods) {
@@ -330,6 +335,7 @@ public class MixAll {
                     String key = first.toLowerCase() + tmp;
                     String property = p.getProperty(key);
                     if (property != null) {
+                        //获取参数类型
                         Class<?>[] pt = method.getParameterTypes();
                         if (pt != null && pt.length > 0) {
                             String cn = pt[0].getSimpleName();
