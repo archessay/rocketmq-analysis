@@ -42,8 +42,14 @@ import org.apache.rocketmq.srvutil.FileWatchService;
 public class NamesrvController {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
 
+    /**
+     * Namesrv 业务配置
+     */
     private final NamesrvConfig namesrvConfig;
 
+    /**
+     * Namesrv netty 配置
+     */
     private final NettyServerConfig nettyServerConfig;
 
     private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl(
@@ -73,10 +79,17 @@ public class NamesrvController {
         this.configuration.setStorePathFromConfig(this.namesrvConfig, "configStorePath");
     }
 
+    /**
+     * 初始化NamesrvController
+     *
+     * @return
+     */
     public boolean initialize() {
 
+        //1.加载持久化的kv配置
         this.kvConfigManager.load();
 
+        //2.创建NettyRemotingServer网络处理对象
         this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
 
         this.remotingExecutor =
