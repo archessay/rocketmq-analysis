@@ -75,8 +75,10 @@ public class NamesrvController {
 
     public boolean initialize() {
 
+        // 加载kvConfig.json
         this.kvConfigManager.load();
 
+        // 创建netty核心组件、public线程池、加载netty sslContext
         this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
 
         this.remotingExecutor =

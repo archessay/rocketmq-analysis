@@ -87,9 +87,16 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
         this(nettyServerConfig, null);
     }
 
+    /**
+     * 创建netty核心组件、public线程池、加载netty sslContext
+     *
+     * @param nettyServerConfig
+     * @param channelEventListener
+     */
     public NettyRemotingServer(final NettyServerConfig nettyServerConfig,
         final ChannelEventListener channelEventListener) {
         super(nettyServerConfig.getServerOnewaySemaphoreValue(), nettyServerConfig.getServerAsyncSemaphoreValue());
+        // netty server bootstrap
         this.serverBootstrap = new ServerBootstrap();
         this.nettyServerConfig = nettyServerConfig;
         this.channelEventListener = channelEventListener;
@@ -148,6 +155,7 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
 
         if (tlsMode != TlsMode.DISABLED) {
             try {
+                // TODO @len.liu netty ssl
                 sslContext = TlsHelper.buildSslContext(false);
                 log.info("SSLContext created for server");
             } catch (CertificateException e) {

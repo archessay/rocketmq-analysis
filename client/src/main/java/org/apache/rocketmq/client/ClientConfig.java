@@ -29,6 +29,9 @@ public class ClientConfig {
     public static final String SEND_MESSAGE_WITH_VIP_CHANNEL_PROPERTY = "com.rocketmq.sendMessageWithVIPChannel";
     private String namesrvAddr = System.getProperty(MixAll.NAMESRV_ADDR_PROPERTY, System.getenv(MixAll.NAMESRV_ADDR_ENV));
     private String clientIP = RemotingUtil.getLocalAddress();
+    /**
+     * ClusterTestRequestProcessor 在构造时，会将其设置为 CLUSTER_TEST_NS_INS_${productEnvName}。其中，productEnvName来自于在Namesrv启动时 -c指定的配置文件 or 命令行参数配置（未配置则默认center）
+     */
     private String instanceName = System.getProperty("rocketmq.client.name", "DEFAULT");
     private int clientCallbackExecutorThreads = Runtime.getRuntime().availableProcessors();
     /**

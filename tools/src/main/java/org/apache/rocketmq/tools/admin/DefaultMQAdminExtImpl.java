@@ -111,6 +111,7 @@ public class DefaultMQAdminExtImpl implements MQAdminExt, MQAdminExtInner {
             case CREATE_JUST:
                 this.serviceState = ServiceState.START_FAILED;
 
+                // 如果 instanceName 为 DEFAULT，则更改 instanceName 为 pid
                 this.defaultMQAdminExt.changeInstanceNameToPID();
 
                 this.mqClientInstance = MQClientManager.getInstance().getAndCreateMQClientInstance(this.defaultMQAdminExt, rpcHook);

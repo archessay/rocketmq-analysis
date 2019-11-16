@@ -92,7 +92,7 @@ public class NamesrvStartup {
         final NettyServerConfig nettyServerConfig = new NettyServerConfig();
         nettyServerConfig.setListenPort(9876);
 
-        //3.读取配置文件，并写入namesrvConfig、nettyServerConfig
+        //3.读取-c指定的配置文件，并写入namesrvConfig、nettyServerConfig
         if (commandLine.hasOption('c')) {
             String file = commandLine.getOptionValue('c');
             if (file != null) {

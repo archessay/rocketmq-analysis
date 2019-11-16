@@ -32,6 +32,9 @@ public class NamesrvConfig {
     private String rocketmqHome = System.getProperty(MixAll.ROCKETMQ_HOME_PROPERTY, System.getenv(MixAll.ROCKETMQ_HOME_ENV));
     private String kvConfigPath = System.getProperty("user.home") + File.separator + "namesrv" + File.separator + "kvConfig.json";
     private String configStorePath = System.getProperty("user.home") + File.separator + "namesrv" + File.separator + "namesrv.properties";
+    /**
+     * 在Namesrv启动时，从 -c指定的配置文件 or 命令行参数配置 中读取该配置项值，未配置则默认center
+     */
     private String productEnvName = "center";
     private boolean clusterTest = false;
     private boolean orderMessageEnable = false;
