@@ -46,11 +46,15 @@ public class KVConfigManager {
     }
 
     /**
+     * 加载持久化的kv配置
+     */
+    /**
      * 加载kvConfig.json
      */
     public void load() {
         String content = null;
         try {
+            //读取文件内容
             content = MixAll.file2String(this.namesrvController.getNamesrvConfig().getKvConfigPath());
         } catch (IOException e) {
             log.warn("Load KV config table exception", e);

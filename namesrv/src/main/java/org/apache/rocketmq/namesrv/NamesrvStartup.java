@@ -59,7 +59,9 @@ public class NamesrvStartup {
     public static NamesrvController main0(String[] args) {
 
         try {
+            //1.根据启动属性创建NamesrvController实例
             NamesrvController controller = createNamesrvController(args);
+            //2.初始化并启动NamesrvController
             start(controller);
             String tip = "The Name Server boot success. serializeType=" + RemotingCommand.getSerializeTypeConfigInThisServer();
             log.info(tip);
@@ -87,7 +89,7 @@ public class NamesrvStartup {
             return null;
         }
 
-        //2.构造namesrvConfig、nettyServerConfig对象
+        //2.构造namesrvConfig(业务参数)、nettyServerConfig(网络参数)对象
         final NamesrvConfig namesrvConfig = new NamesrvConfig();
         final NettyServerConfig nettyServerConfig = new NettyServerConfig();
         nettyServerConfig.setListenPort(9876);
@@ -144,6 +146,13 @@ public class NamesrvStartup {
         return controller;
     }
 
+    /**
+     * 初始化并启动NamesrvController
+     *
+     * @param controller
+     * @return
+     * @throws Exception
+     */
     public static NamesrvController start(final NamesrvController controller) throws Exception {
 
         if (null == controller) {
