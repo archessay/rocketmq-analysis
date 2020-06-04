@@ -424,6 +424,7 @@ public class RouteInfoManager {
                 RemotingUtil.closeChannel(next.getValue().getChannel());
                 it.remove();
                 log.warn("The broker channel expired, {} {}ms", next.getKey(), BROKER_CHANNEL_EXPIRED_TIME);
+                //TODO 稍后解析
                 this.onChannelDestroy(next.getKey(), next.getValue().getChannel());
             }
         }

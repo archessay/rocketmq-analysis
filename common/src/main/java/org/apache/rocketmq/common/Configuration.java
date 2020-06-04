@@ -33,17 +33,25 @@ public class Configuration {
     private final InternalLogger log;
 
     /**
-     * 包括namesrvConfig, nettyServerConfig
+     * 包括namesrvConfig, nettyServerConfig配置对象
      */
     private List<Object> configObjectList = new ArrayList<Object>(4);
     private String storePath;
     private boolean storePathFromConfig = false;
+    /**
+     * namesrvConfig配置对象
+     */
     private Object storePathObject;
+    /**
+     * NamesrvConfig#configStorePath字段，即Namesrv启动时指定的配置文件路径，使用-c选项
+     */
     private Field storePathField;
     private DataVersion dataVersion = new DataVersion();
     private ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
     /**
      * All properties include configs in object and extend properties.
+     *
+     * 保存所有的配置
      */
     private Properties allConfigs = new Properties();
 

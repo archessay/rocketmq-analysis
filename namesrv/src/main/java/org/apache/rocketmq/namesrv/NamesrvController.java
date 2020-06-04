@@ -43,7 +43,7 @@ public class NamesrvController {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
 
     /**
-     * Namesrv 业务配置
+     * Namesrv 配置
      */
     private final NamesrvConfig namesrvConfig;
 
@@ -52,6 +52,11 @@ public class NamesrvController {
      */
     private final NettyServerConfig nettyServerConfig;
 
+    /**
+     * 心跳检测线程池
+     * 1、检测不活跃的broker
+     * 2、打印kv配置
+     */
     private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl(
         "NSScheduledThread"));
     private final KVConfigManager kvConfigManager;
@@ -61,6 +66,9 @@ public class NamesrvController {
 
     private BrokerHousekeepingService brokerHousekeepingService;
 
+    /**
+     * Netty业务线程池
+     */
     private ExecutorService remotingExecutor;
 
     private Configuration configuration;
@@ -80,23 +88,27 @@ public class NamesrvController {
     }
 
     /**
-     * 初始化NamesrvController
+     * 初始化NamesrvController，加载KV配置，创建NettyServer网络处理对象，开启两个定时任务，在RocketMQ中此类定时任务成为心跳检测
      *
      * @return
      */
     public boolean initialize() {
 
-        // 加载kvConfig.json
+        // 加载持久化的kv配置 kvConfig.json
         this.kvConfigManager.load();
 
-        // 创建netty核心组件、public线程池、加载netty sslContext
+        // 创建NettyServer网络处理对象（初始化其中的netty核心组件、public线程池、加载netty sslContext）
         this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
 
+        //创建Netty业务线程池
         this.remotingExecutor =
             Executors.newFixedThreadPool(nettyServerConfig.getServerWorkerThreads(), new ThreadFactoryImpl("RemotingExecutorThread_"));
 
+        //注册默认请求处理器
         this.registerProcessor();
 
+        //心跳检测
+        //1、NameServer每隔10s扫描一次Broker，移除处于不活跃的Broker
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -105,6 +117,7 @@ public class NamesrvController {
             }
         }, 5, 10, TimeUnit.SECONDS);
 
+        //2、NameServer每隔10分钟打印一次KV配置
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -178,6 +191,7 @@ public class NamesrvController {
         this.remotingExecutor.shutdown();
         this.scheduledExecutorService.shutdown();
 
+        // a listener to reload SslContext
         if (this.fileWatchService != null) {
             this.fileWatchService.shutdown();
         }

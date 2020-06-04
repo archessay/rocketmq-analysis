@@ -36,6 +36,11 @@ public class Logger implements Appender.AppenderPipeline {
 
     volatile private Level level;
 
+    /**
+     * 父节点，
+     *
+     * eg, [Logger A].[ProvisionNode B].[Logger C] C 的父节点为 A，而非 B
+     */
     volatile private Logger parent;
 
     Appender.AppenderPipelineImpl appenderPipeline;
@@ -327,11 +332,14 @@ public class Logger implements Appender.AppenderPipeline {
                 if (o == null) {
                     logger = makeNewLoggerInstance(name);
                     ht.put(key, logger);
+                    //以"."为分隔符来分割 $name，获取并设置 $logger 的父节点
+                    //eg, [Logger A] -> [ProvisionNode A.B] -> [Logger A.B.C], A.B.C 的父节点为 A，而非 A.B
                     updateParents(logger);
                     return logger;
                 } else if (o instanceof Logger) {
                     return (Logger) o;
                 } else if (o instanceof ProvisionNode) {
+                    //如果 $o 的类型为 ProvisionNode，代表此 $name 在 $ht 中已存在，并且为一个预占位节点
                     logger = makeNewLoggerInstance(name);
                     ht.put(key, logger);
                     updateChildren((ProvisionNode) o, logger);
@@ -385,7 +393,6 @@ public class Logger implements Appender.AppenderPipeline {
             }
         }
 
-
         private void updateParents(Logger cat) {
             String name = cat.name;
             int length = name.length();
@@ -416,10 +423,14 @@ public class Logger implements Appender.AppenderPipeline {
         }
 
         private void updateChildren(ProvisionNode pn, Logger logger) {
+            //当前预占位节点其子节点的个数
             final int last = pn.size();
 
             for (int i = 0; i < last; i++) {
                 Logger l = pn.elementAt(i);
+                //eg, [Logger A] -> [ProvisionNode A.B] -> [ProvisionNode A.B.C] -> [Logger A.B.C.D],
+                //假设这里的 $pn 为 A.B, $l 为 A.B.C.D，
+                //此时，A.B.C.D 的父节点为 A，而非 A.B/A.B.C，而 A.B 的子节点为 A.B.C.D
                 if (!l.parent.name.startsWith(logger.name)) {
                     logger.parent = l.parent;
                     l.parent = logger;

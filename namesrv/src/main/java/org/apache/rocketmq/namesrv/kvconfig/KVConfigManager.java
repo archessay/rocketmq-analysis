@@ -46,10 +46,7 @@ public class KVConfigManager {
     }
 
     /**
-     * 加载持久化的kv配置
-     */
-    /**
-     * 加载kvConfig.json
+     * 加载持久化的kv配置 kvConfig.json
      */
     public void load() {
         String content = null;

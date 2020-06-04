@@ -59,7 +59,7 @@ public class NamesrvStartup {
     public static NamesrvController main0(String[] args) {
 
         try {
-            //1.根据启动属性创建NamesrvController实例
+            //1.根据启动参数创建NamesrvController实例
             NamesrvController controller = createNamesrvController(args);
             //2.初始化并启动NamesrvController
             start(controller);
@@ -76,11 +76,11 @@ public class NamesrvStartup {
     }
 
     public static NamesrvController createNamesrvController(String[] args) throws IOException, JoranException {
-        //0.设置版本号系统环境变量
+        //0.设置 版本号 系统环境变量
         System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));
         //PackageConflictDetect.detectFastjson();
 
-        //1.1初始化命令行参数 -h/help, -n/namesrvAddr, -c/configFile, -p/printConfigItem
+        //1.1.初始化命令行参数 -h/help, -n/namesrvAddr, -c/configFile, -p/printConfigItem
         Options options = ServerUtil.buildCommandlineOptions(new Options());
         //1.2解析命令行入参，如果包含-h，则打印帮助信息，程序到此结束
         commandLine = ServerUtil.parseCmdLine("mqnamesrv", args, buildCommandlineOptions(options), new PosixParser());
@@ -120,7 +120,6 @@ public class NamesrvStartup {
         //4.读取命令行配置参数写入namesrvConfig
         MixAll.properties2Object(ServerUtil.commandLine2Properties(commandLine), namesrvConfig);
 
-        //参见：https://www.jianshu.com/p/cca0cdec9b1f
         if (null == namesrvConfig.getRocketmqHome()) {
             System.out.printf("Please set the %s variable in your environment to match the location of the RocketMQ installation%n", MixAll.ROCKETMQ_HOME_ENV);
             System.exit(-2);
@@ -165,6 +164,7 @@ public class NamesrvStartup {
             System.exit(-3);
         }
 
+        //注册 jvm 关闭的钩子
         Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(log, new Callable<Void>() {
             @Override
             public Void call() throws Exception {
